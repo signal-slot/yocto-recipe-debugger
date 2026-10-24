@@ -2,8 +2,21 @@
 name = "yocto-recipe-debugger"
 version = "0.1.0"
 description = "Language server that shows what BitBake really does with a recipe"
+readme = "README.md"
+authors = [{ name = "Tasuku Suzuki", email = "tasuku.suzuki@signal-slot.co.jp" }]
 requires-python = ">=3.9"
 dependencies = ["pygls>=2.0,<3"]
+keywords = ["yocto", "bitbake", "openembedded", "language-server"]
+classifiers = [
+    "Development Status :: 3 - Alpha",
+    "Environment :: Console",
+    "Programming Language :: Python :: 3",
+    "Topic :: Software Development :: Embedded Systems",
+]
+
+[project.urls]
+Homepage = "https://github.com/signal-slot/yocto-recipe-debugger"
+Issues = "https://github.com/signal-slot/yocto-recipe-debugger/issues"
 
 [project.optional-dependencies]
 test = ["pytest"]

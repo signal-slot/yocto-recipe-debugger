@@ -6,6 +6,8 @@ It does not parse recipes by itself. BitBake parses the recipe with
 variable history tracking (the same data as `bitbake -e`), and the server
 reads that history to decide, for each line, whether it has an effect.
 
+![Lines with no effect are faded, problems are underlined, and final values are shown at the end of the line](docs/images/overview.png)
+
 ## What it shows
 
 Diagnostics (on open and on save):
@@ -32,6 +34,8 @@ A line is reported as having no effect only when it has no effect in
 Hover on a variable shows its final value, the value in other variants, and
 the full history (file, line, operation, and whether it was applied).
 
+![Hover shows the final value and the history](docs/images/hover.png)
+
 Inlay hints show the final value at the end of the last assignment of each
 variable in the file.
 
@@ -40,6 +44,11 @@ Supported files: `.bb`, `.bbappend` (analyzed with the recipe that uses it),
 includes it). The analysis uses the configuration of your build directory
 (`MACHINE`, `DISTRO`, layers), so results change when the configuration
 changes.
+
+Tested with these poky releases: kirkstone (4.0), langdale (4.1),
+scarthgap (5.0), and walnascar (5.2).
+
+Not supported yet: `.bbclass` and `.conf` files.
 
 ## Layout
 
@@ -93,6 +102,8 @@ docker build -t yocto-host:langdale devenv/langdale
 ```
 
 `-i` is required: the server talks to the backend over stdin and stdout.
+Replace `1000:100` with your user and group IDs (`id -u` and `id -g`), so
+that BitBake can write to the build directory.
 
 ### Notes
 

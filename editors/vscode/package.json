@@ -5,8 +5,12 @@
   "version": "0.1.0",
   "publisher": "signal-slot",
   "license": "MIT",
+  "repository": { "type": "git", "url": "https://github.com/signal-slot/yocto-recipe-debugger.git" },
+  "homepage": "https://github.com/signal-slot/yocto-recipe-debugger#readme",
+  "bugs": { "url": "https://github.com/signal-slot/yocto-recipe-debugger/issues" },
   "engines": { "vscode": "^1.85.0" },
   "categories": ["Programming Languages", "Linters"],
+  "keywords": ["yocto", "bitbake", "openembedded", "poky", "language server"],
   "activationEvents": [
     "workspaceContains:**/*.bb",
     "workspaceContains:**/*.bbappend",
@@ -49,7 +53,7 @@
   "scripts": {
     "vendor": "rm -rf server && mkdir -p server && mkdir -p server/src && cp -r ../../src/yocto_recipe_debugger server/src/ && uv pip install --quiet --target server/lib 'pygls>=2.0,<3' && find server -name __pycache__ -prune -exec rm -rf {} +",
     "compile": "tsc -p .",
-    "package": "npm run vendor && npm run compile && vsce package --allow-missing-repository"
+    "package": "npm run vendor && npm run compile && vsce package"
   },
   "dependencies": {
     "vscode-languageclient": "^9.0.1"
