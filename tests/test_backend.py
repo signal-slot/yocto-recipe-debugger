@@ -237,3 +237,9 @@ def test_statement_start_and_end_of_function():
     lines = ["do_install:append() {", "    echo hi", "}", ""]
     assert statement_start(lines, 3) == 1
     assert statement_end(lines, 1) == 3
+
+
+def test_weak_default_is_not_called_python_code():
+    weak = ev("X", 1, "set", "default", flag="_defaultval", parsing=False)
+    assert "(Python code)" not in backend.where(weak)
+    assert "(Python code)" in backend.where(ev("X", 3, parsing=False))

@@ -111,6 +111,11 @@ def test_include(results):
     assert found(result, INC, "YRD_INC:append:libc-musl") == ["inactive-override"]
 
 
+def test_hover_history_lists_variable_before_overrides(results):
+    history = results[SAMPLE]["variables"]["YRD_REPLACED"]["history"]
+    assert [h["variable"] for h in history] == ["YRD_REPLACED", "YRD_REPLACED:class-target"]
+
+
 def test_variable_values(results):
     variables = results[SAMPLE]["variables"]
     assert variables["YRD_GLUE"]["value"] == "alpha betagamma"

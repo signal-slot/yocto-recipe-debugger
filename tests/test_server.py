@@ -97,3 +97,10 @@ def test_inlay_hint_hidden_when_line_was_edited():
     edited[1] = 'FOO:append = " c"'
     hints = inlay_hints(analysis(), edited, 0, 10)
     assert [h.position.line for h in hints] == [3]
+
+
+def test_no_inlay_hint_for_functions():
+    result = dict(RESULT, variables={"do_install": {"value": "base_do_install", "history": [
+        {"variable": "do_install", "file": PATH, "line": 1, "op": ":append",
+         "status": "applied", "function": True}]}})
+    assert inlay_hints(Analysis(PATH, list(LINES), result), list(LINES), 0, 10) == []

@@ -91,7 +91,9 @@ def where(event):
     text = "%s:%s" % (os.path.basename(event.get("file") or "?"), event.get("line", "?"))
     # The parser marks its own assignments with "parsing"; a plain "set"
     # without it comes from Python code such as an anonymous function.
-    if event.get("op") in OP_SET and not event.get("parsing") and not event.get("function"):
+    # Flags ("??=" is the flag _defaultval) never carry "parsing".
+    if (event.get("op") in OP_SET and not event.get("parsing")
+            and not event.get("flag") and not event.get("function")):
         text += " (Python code)"
     return text
 
@@ -903,8 +905,10 @@ class Backend(object):
 
         variables = {}
         for name in sorted(names):
-            related = [n for n in histories
-                       if n == name or n.startswith(name + ":")]
+            # The variable itself first, then its overrides.  Each one is
+            # in parse order; BitBake does not record the order between them.
+            related = ([name] if name in histories else []) + sorted(
+                n for n in histories if n.startswith(name + ":"))
             value = value_of(name)
             if value is None and not related:
                 continue
@@ -921,6 +925,7 @@ class Backend(object):
                         "flag": event.get("flag"),
                         "detail": clip(event.get("detail"), MAX_DETAIL_LENGTH),
                         "status": status_of(analysis.findings.get(event_key(event), [])),
+                        "function": bool(event.get("function")),
                     })
             other = {}
             for variant, _, _, (vdata, vvalue_of, _) in variants[1:]:

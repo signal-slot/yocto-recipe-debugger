@@ -157,7 +157,7 @@ def hover_markdown(result: dict, name: str) -> str:
 
     history = var.get("history") or []
     if history:
-        blocks.append("**History** (in parse order)")
+        blocks.append("**History** (parse order of each variable)")
         shown = history[-HOVER_HISTORY_LIMIT:]
         if len(shown) < len(history):
             blocks.append("_%d earlier operations not shown_" % (len(history) - len(shown)))
@@ -187,10 +187,13 @@ def inlay_hints(analysis: Analysis, current_lines: list, first: int, last: int) 
         value = var.get("value")
         if value is None:
             continue
-        # "rename" events repeat an assignment under its expanded name.
-        lines_here = [e["line"] for e in var.get("history") or []
-                      if e.get("file") == analysis.path
-                      and not str(e.get("op", "")).startswith("rename")]
+        # "rename" events repeat an assignment under its expanded name.  The
+        # "value" of a function is its body, which does not fit in a hint.
+        events = [e for e in var.get("history") or [] if e.get("file") == analysis.path]
+        if any(e.get("function") for e in events):
+            continue
+        lines_here = [e["line"] for e in events
+                      if not str(e.get("op", "")).startswith("rename")]
         if not lines_here:
             continue
         line = max(lines_here) - 1
