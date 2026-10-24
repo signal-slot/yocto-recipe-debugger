@@ -1,3 +1,6 @@
+# Copyright (C) 2026 Signal Slot Inc.
+# SPDX-License-Identifier: MIT
+
 """Language server: shows what BitBake really does with a recipe.
 
 The analysis runs on save (and when a file is opened), because BitBake reads

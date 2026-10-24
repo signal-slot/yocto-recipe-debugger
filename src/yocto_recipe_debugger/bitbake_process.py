@@ -1,3 +1,6 @@
+# Copyright (C) 2026 Signal Slot Inc.
+# SPDX-License-Identifier: MIT
+
 """Start backend.py inside the BitBake environment and talk to it."""
 
 import itertools

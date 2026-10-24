@@ -1,3 +1,6 @@
+# Copyright (C) 2026 Signal Slot Inc.
+# SPDX-License-Identifier: MIT
+
 """Unit tests for turning backend results into LSP objects."""
 
 from lsprotocol import types

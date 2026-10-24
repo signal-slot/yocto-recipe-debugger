@@ -1,3 +1,6 @@
+# Copyright (C) 2026 Signal Slot Inc.
+# SPDX-License-Identifier: MIT
+
 """Integration tests against real BitBake.
 
 They need a build directory made by tests/integration_setup.sh and are

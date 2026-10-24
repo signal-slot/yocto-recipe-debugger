@@ -1,3 +1,6 @@
+# Copyright (C) 2026 Signal Slot Inc.
+# SPDX-License-Identifier: GPL-2.0-only
+
 """BitBake-side backend of yocto-recipe-debugger.
 
 This file runs inside the BitBake build environment (after
@@ -112,8 +115,9 @@ def resolve_override(key, candidates, overrides):
 
     ``candidates`` maps an override string ("arm", "a:b") to the variable
     name that carries it ("FOO:arm").  This is a direct port of the
-    selection loop in bb.data_smart.DataSmart.getVarFlag(), including its
-    use of str.replace(), so that the result matches BitBake exactly.
+    selection loop in bb.data_smart.DataSmart.getVarFlag() (BitBake,
+    lib/bb/data_smart.py, GPL-2.0-only), including its use of
+    str.replace(), so that the result matches BitBake exactly.
     """
     overrides_set = set(overrides)
     active = {}

@@ -61,3 +61,8 @@ when a file is opened or saved.
   `bitbake -e` on save, this extension waits until it ends.
 
 More details: <https://github.com/signal-slot/yocto-recipe-debugger>
+
+## License
+
+MIT, except the BitBake-side backend (`backend.py`), which is
+GPL-2.0-only. See the LICENSE file.

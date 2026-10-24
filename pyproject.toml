@@ -3,6 +3,9 @@ name = "yocto-recipe-debugger"
 version = "0.1.0"
 description = "Language server that shows what BitBake really does with a recipe"
 readme = "README.md"
+# backend.py is GPL-2.0-only; see LICENSE.
+license = "MIT AND GPL-2.0-only"
+license-files = ["LICENSE", "LICENSES/*"]
 authors = [{ name = "Tasuku Suzuki", email = "tasuku.suzuki@signal-slot.co.jp" }]
 requires-python = ">=3.9"
 dependencies = ["pygls>=2.0,<3"]
@@ -25,7 +28,7 @@ test = ["pytest"]
 yocto-recipe-debugger = "yocto_recipe_debugger.server:main"
 
 [build-system]
-requires = ["setuptools>=61"]
+requires = ["setuptools>=77"]  # SPDX license expressions
 build-backend = "setuptools.build_meta"
 
 [tool.setuptools.packages.find]

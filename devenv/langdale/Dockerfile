@@ -1,3 +1,6 @@
+# Copyright (C) 2026 Signal Slot Inc.
+# SPDX-License-Identifier: MIT
+
 # Build host for Yocto 4.1 (langdale).
 # langdale's BitBake uses ast.Str, which was removed in Python 3.12,
 # so it needs a distribution whose python3 is 3.11 or older.

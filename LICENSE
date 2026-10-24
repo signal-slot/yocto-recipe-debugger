@@ -1,0 +1,13 @@
+yocto-recipe-debugger is licensed under the MIT License, except for one file:
+
+  src/yocto_recipe_debugger/backend.py   GPL-2.0-only
+
+backend.py imports BitBake (GPL-2.0-only) and contains code ported from
+BitBake's bb/data_smart.py.  It runs as a separate process and talks to
+the language server only through a pipe (JSON lines).
+
+Each file has an SPDX-License-Identifier line.  The license texts are in
+the LICENSES directory:
+
+  LICENSES/MIT.txt
+  LICENSES/GPL-2.0-only.txt

@@ -141,3 +141,9 @@ export YRD_TEST_INIT_SCRIPT=/path/to/poky/oe-init-build-env
 export YRD_TEST_WRAPPER="docker run --rm -i --user 1000:100 -e HOME=/tmp -v /path/to/poky:/path/to/poky -v $PWD:$PWD yocto-host:langdale"
 .venv/bin/python -m pytest
 ```
+
+## License
+
+MIT, except `src/yocto_recipe_debugger/backend.py`, which is GPL-2.0-only
+because it imports BitBake and contains code ported from BitBake. See
+[LICENSE](LICENSE) and the [LICENSES](LICENSES) directory.

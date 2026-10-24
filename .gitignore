@@ -5,4 +5,6 @@ node_modules/
 *.vsix
 editors/vscode/out/
 editors/vscode/server/
+editors/vscode/LICENSE
+editors/vscode/LICENSES/
 *.egg-info/

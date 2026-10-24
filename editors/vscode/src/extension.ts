@@ -1,3 +1,6 @@
+// Copyright (C) 2026 Signal Slot Inc.
+// SPDX-License-Identifier: MIT
+
 import * as path from "path";
 import * as vscode from "vscode";
 import { LanguageClient, LanguageClientOptions, ServerOptions } from "vscode-languageclient/node";

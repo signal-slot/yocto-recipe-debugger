@@ -1,3 +1,6 @@
+# Copyright (C) 2026 Signal Slot Inc.
+# SPDX-License-Identifier: MIT
+
 """Unit tests for the analysis rules (no BitBake needed).
 
 The event dictionaries have the same shape as bb.data_smart.VariableHistory

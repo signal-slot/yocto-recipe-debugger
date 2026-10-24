@@ -1,4 +1,7 @@
 #!/bin/sh
+# Copyright (C) 2026 Signal Slot Inc.
+# SPDX-License-Identifier: MIT
+
 # Create a throw-away build directory that adds the fixture layer.
 # Usage: tests/integration_setup.sh <poky dir> <build dir>
 set -eu
