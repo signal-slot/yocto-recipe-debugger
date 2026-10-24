@@ -41,7 +41,9 @@ variable in the file.
 
 Supported files: `.bb`, `.bbappend` (analyzed with the recipe that uses it),
 `.inc` (analyzed with a recipe in the same directory, or the one above, that
-includes it). The analysis uses the configuration of your build directory
+includes it). In VS Code, `.inc` files under a `recipes-*` directory are
+BitBake files; other `.inc` files are analyzed only when the workspace
+has a `.bb` or `.bbappend` file. The analysis uses the configuration of your build directory
 (`MACHINE`, `DISTRO`, layers), so results change when the configuration
 changes.
 

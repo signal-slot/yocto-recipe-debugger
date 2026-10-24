@@ -21,6 +21,7 @@ has an effect on the final value.  The rules below follow
 bb.data_smart.DataSmart.getVarFlag() and bb.parse.ast.DataNode.eval().
 """
 
+import contextlib
 import json
 import os
 import re
@@ -557,7 +558,7 @@ def status_of(findings):
 # ---------------------------------------------------------------------------
 
 FUNCTION_START_RE = re.compile(
-    r"^\s*(?:(?:python|fakeroot)\s+)*[^\s=]*\s*\(\s*\)\s*\{\s*$")
+    r"^\s*(?:(?:python|fakeroot)\s+)*(?P<name>[^\s=]*)\s*\(\s*\)\s*\{\s*$")
 VAR_REF_RE = re.compile(r"\$\{([A-Za-z0-9_\-+./:~@%]+)\}")
 ASSIGN_NAME_RE = re.compile(
     r"^\s*(?:export\s+)?([A-Za-z0-9_\-+.${}/:~@%]+?)(?:\[[^\]]*\])?\s*"
@@ -584,6 +585,16 @@ def statement_start(lines, line):
     while start > 1 and lines[start - 2].rstrip("\n").endswith("\\"):
         start -= 1
     return start
+
+
+def function_definitions(lines):
+    """(name, line) of every named function definition; line is 1-based."""
+    found = []
+    for i, text in enumerate(lines, 1):
+        m = FUNCTION_START_RE.match(text)
+        if m and m.group("name"):
+            found.append((m.group("name"), i))
+    return found
 
 
 def statement_end(lines, line):
@@ -627,6 +638,11 @@ def realpath(path):
     if path not in _realpaths:
         _realpaths[path] = os.path.realpath(path)
     return _realpaths[path]
+
+
+def busy_error():
+    return BackendError("BitBake is running in this build directory. "
+                        "The file is analyzed again when it is free.", code="busy")
 
 
 def clip(text, limit):
@@ -690,32 +706,66 @@ class Backend(object):
         """
         self.wait_until_free(30)
 
-    def check_not_busy(self):
-        """Do not join a BitBake that is already running in this build.
+    @staticmethod
+    @contextlib.contextmanager
+    def own_server_only():
+        """Make Tinfoil start its own server and never join a running one.
 
-        Tinfoil would connect to the running server (bitbake.sock).  That
-        disturbs the user's build, and fails when the server runs in another
-        container.  Test the lock the same way bb.main.lockBitbake() does.
+        Joining the user's BitBake disturbs their build, and fails when it
+        runs in another container.  bb.main.setup_bitbake() takes
+        bitbake.lock with lockBitbake(): with the lock it starts a server,
+        without it it connects to the running one (bitbake.sock).  Refuse
+        the second case at that point; a check before Tinfoil.prepare()
+        would leave a gap in which BitBake can start.
 
-        Short commands, such as the "bitbake -e" that other editor
-        extensions run on save, end in a few seconds, so wait a little
-        before giving up.
+        Raises BackendError "busy" when refused.
         """
-        if not self.wait_until_free(BUSY_WAIT_SECONDS):
-            raise BackendError("BitBake is running in this build directory. "
-                               "The file is analyzed again when it is free.", code="busy")
+        import bb.event
+        import bb.main
 
-    def open_tinfoil(self):
+        class Refused(bb.main.BBMainFatal):
+            """setup_bitbake() raises BBMainFatal again without retrying."""
+
+        original = bb.main.lockBitbake
+        handlers = list(bb.main.logger.handlers)
+
+        def lock_or_refuse():
+            result = original()  # (topdir, lock) or (topdir, lock, lockfile)
+            if result[1] is None:
+                raise Refused()
+            return result
+
+        bb.main.lockBitbake = lock_or_refuse
+        try:
+            yield
+        except Refused:
+            # setup_bitbake() removes its log handler only when it returns.
+            for handler in list(bb.main.logger.handlers):
+                if handler not in handlers and isinstance(handler, bb.event.LogHandler):
+                    bb.main.logger.removeHandler(handler)
+            raise busy_error()
+        finally:
+            bb.main.lockBitbake = original
+
+    def start_tinfoil(self):
         import bb.tinfoil
-        self.check_not_busy()
         tinfoil = bb.tinfoil.Tinfoil(tracking=True, output=sys.stderr)
         try:
-            tinfoil.prepare(config_only=False, quiet=2)
+            with self.own_server_only():
+                tinfoil.prepare(config_only=False, quiet=2)
             add_layer_libs(tinfoil.config_data.getVar("BBPATH") or "")
         except BaseException:
             tinfoil.shutdown()
             raise
         return tinfoil
+
+    def open_tinfoil(self):
+        # Short commands, such as the "bitbake -e" that other editor
+        # extensions run on save, end in a few seconds: wait a little
+        # instead of reporting "busy" at once.
+        if not self.wait_until_free(BUSY_WAIT_SECONDS):
+            raise busy_error()
+        return self.start_tinfoil()
 
     # -- recipe lookup ---------------------------------------------------
 
@@ -806,7 +856,7 @@ class Backend(object):
         last_error = None
         for recipe in self.recipes_for(tinfoil, path):
             try:
-                variants = self.parse_variants(tinfoil, recipe)
+                variants = self.parse_variants(tinfoil, recipe, path, lines)
             except BackendError as e:
                 last_error = e
                 continue
@@ -818,7 +868,7 @@ class Backend(object):
             return self.build_result(path, lines, source, recipe, variants)
         raise last_error or BackendError("No recipe found for this file.")
 
-    def parse_variants(self, tinfoil, recipe):
+    def parse_variants(self, tinfoil, recipe, path, lines):
         try:
             d = tinfoil.parse_recipe_file(recipe)
         except Exception as e:
@@ -850,17 +900,18 @@ class Backend(object):
                         events.append(event)
                 if events:
                     histories[name] = events
-            # Function definitions are missing from the history.  Only
-            # names with ":" can carry an override or :append, which keeps
-            # the number of remote calls small.
+            # Function definitions are missing from the history (only
+            # ast.py events, which are internal).  The flags keep the last
+            # definition of each name.
+            last_definition = {}
             for name in names:
-                if ":" not in name:
-                    continue
                 found = function_event(name, data.getVarFlags(name) or {})
                 if found:
                     owner, event = found
                     event["file"] = realpath(event["file"])
                     histories.setdefault(owner, []).append(event)
+                    last_definition[name] = (owner, event)
+            self.add_replaced_definitions(data, path, lines, histories, last_definition)
             packages = (data.getVar("PACKAGES") or "").split()
             dynamic = []
             for pattern in (data.getVar("PACKAGES_DYNAMIC") or "").split():
@@ -889,6 +940,26 @@ class Backend(object):
                                        expand, value_of).run()
             result.append((variant, analysis, histories, (data, value_of, overrides)))
         return result
+
+    @staticmethod
+    def add_replaced_definitions(data, path, lines, histories, last_definition):
+        """Add events for definitions in ``path`` that a later one replaces.
+
+        Only the last definition of a function is known from its flags.  An
+        earlier "do_install() {...}" (for example in the recipe, when a
+        bbappend defines it again) has no effect, so add it before the last
+        one.  :append and :prepend definitions all apply and are skipped.
+        """
+        for name, line in function_definitions(lines):
+            if "${" in name:
+                name = data.expand(name)
+            if SETVAR_RE.match(name) or name not in last_definition:
+                continue
+            owner, last = last_definition[name]
+            if (last["file"], last["line"]) == (path, line):
+                continue
+            events = histories[owner]
+            events.insert(events.index(last), dict(last, file=path, line=line))
 
     @staticmethod
     def parse_error(exc):

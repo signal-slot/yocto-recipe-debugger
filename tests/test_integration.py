@@ -13,6 +13,7 @@ See README.md for an example.
 
 import asyncio
 import os
+import subprocess
 import sys
 from pathlib import Path
 
@@ -20,7 +21,9 @@ import pytest
 from lsprotocol import types
 from pygls.lsp.client import LanguageClient
 
-from yocto_recipe_debugger.bitbake_process import BitbakeProcess, BitbakeSettings
+from yocto_recipe_debugger.bitbake_process import (
+    BACKEND_SOURCE, BitbakeProcess, BitbakeSettings,
+)
 
 BUILD_DIR = os.environ.get("YRD_TEST_BUILD_DIR")
 pytestmark = pytest.mark.skipif(not BUILD_DIR, reason="YRD_TEST_BUILD_DIR is not set")
@@ -82,6 +85,9 @@ def test_variants(results):
     ('YRD_NATIVE:append:class-nativesdk', ["inactive-override"]),
     ('YRD_MULTI = "a', ["overwritten"]),
     ('do_install:append:libc-musl', ["inactive-override"]),
+    # Defined again in the bbappend.
+    ('do_configure()', ["overwritten"]),
+    ('yrd_helper()', []),
     ('BBCLASSEXTEND', []),
 ])
 def test_sample_recipe(results, text, expected):
@@ -94,6 +100,8 @@ def test_ranges(results):
     assert by_line[multi]["end_line"] == multi + 2
     func = line_of(SAMPLE, "do_install:append:libc-musl")
     assert by_line[func]["end_line"] == func + 2
+    plain = line_of(SAMPLE, "do_configure()")
+    assert by_line[plain]["end_line"] == plain + 2
 
 
 def test_bbappend(results):
@@ -102,6 +110,16 @@ def test_bbappend(results):
     assert found(result, APPEND, "YRD_APPEND_INACTIVE") == ["inactive-override"]
     assert found(result, APPEND, "python do_compile:prepend") == ["inactive-override"]
     assert results[SAMPLE]["variables"]["YRD_TWICE"]["value"] == "from-bbappend"
+    assert found(result, APPEND, "do_configure()") == []
+
+
+def test_plain_functions_are_in_history(results):
+    variables = results[SAMPLE]["variables"]
+    (helper,) = variables["yrd_helper"]["history"]
+    assert (helper["line"], helper["function"]) == (line_of(SAMPLE, "yrd_helper()"), True)
+    history = variables["do_configure"]["history"]
+    assert [(h["file"], h["status"]) for h in history] == [
+        (str(SAMPLE), "overwritten"), (str(APPEND), "applied")]
 
 
 def test_include(results):
@@ -227,3 +245,32 @@ def test_short_bitbake_command_is_waited_for():
         finally:
             release.join()
             process.close()
+
+
+# BitBake starts after the backend waited for the lock and before Tinfoil
+# takes it.  Tinfoil must not connect to that BitBake.
+STARTS_IN_THE_GAP = """
+import fcntl, sys, time
+namespace = {"__name__": "yrd_backend"}
+exec(compile(open(%r).read(), "backend.py", "exec"), namespace)
+backend = namespace["Backend"](sys.stdout)
+lock = open(backend.lock_path(), "a+")
+fcntl.flock(lock, fcntl.LOCK_EX)
+start = time.time()
+try:
+    backend.start_tinfoil().shutdown()
+    print("RESULT joined")
+except namespace["BackendError"] as e:
+    print("RESULT %%s %%d" %% (e.code, time.time() - start))
+""" % str(BACKEND_SOURCE)
+
+
+def test_bitbake_started_in_the_gap_is_not_joined():
+    command = settings().command()
+    command[-1] = STARTS_IN_THE_GAP  # run this script instead of the backend
+    out = subprocess.run(command, stdout=subprocess.PIPE, stderr=subprocess.PIPE,
+                         universal_newlines=True, timeout=600).stdout
+    (result,) = [line.split()[1:] for line in out.splitlines() if line.startswith("RESULT")]
+    code, seconds = result
+    assert code == "busy"
+    assert int(seconds) < 5  # no "Reconnecting to bitbake server" retries

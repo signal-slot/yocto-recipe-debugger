@@ -233,6 +233,12 @@ def test_statement_start_of_continued_value():
     assert statement_start(lines, 4) == 4
 
 
+def test_function_definitions():
+    lines = ["do_install() {", "}", "python do_x:append() {", "}", "python () {", "}",
+             "X = \"a\""]
+    assert backend.function_definitions(lines) == [("do_install", 1), ("do_x:append", 3)]
+
+
 def test_statement_start_and_end_of_function():
     lines = ["do_install:append() {", "    echo hi", "}", ""]
     assert statement_start(lines, 3) == 1

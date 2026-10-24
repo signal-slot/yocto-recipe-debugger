@@ -59,6 +59,15 @@ do_install:append:libc-musl() {
     echo musl
 }
 
+# Plain functions.  The bbappend defines do_configure again.
+do_configure() {
+    echo recipe
+}
+
+yrd_helper() {
+    echo helper
+}
+
 BBCLASSEXTEND = "native"
 
 # Reference to a variable that also has package-specific forms.

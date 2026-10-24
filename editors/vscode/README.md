@@ -19,8 +19,10 @@ shows, for each line, whether it has an effect.
 
 ![Hover shows the final value and the history](https://raw.githubusercontent.com/signal-slot/yocto-recipe-debugger/main/docs/images/hover.png)
 
-Supported files: `.bb`, `.bbappend`, and `.inc`. The analysis runs when a
-file is opened or saved.
+Supported files: `.bb`, `.bbappend`, and `.inc`. `.inc` files under a
+`recipes-*` directory are BitBake files; other `.inc` files are analyzed
+only when the workspace has a `.bb` or `.bbappend` file. The analysis runs
+when a file is opened or saved.
 
 ## Requirements
 

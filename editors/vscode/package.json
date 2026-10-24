@@ -19,7 +19,12 @@
   "main": "./out/extension.js",
   "contributes": {
     "languages": [
-      { "id": "bitbake", "aliases": ["BitBake"], "extensions": [".bb", ".bbappend", ".bbclass"] }
+      {
+        "id": "bitbake",
+        "aliases": ["BitBake"],
+        "extensions": [".bb", ".bbappend", ".bbclass"],
+        "filenamePatterns": ["**/recipes-*/**/*.inc"]
+      }
     ],
     "commands": [
       { "command": "yoctoRecipeDebugger.restart", "title": "Yocto Recipe Debugger: Restart Server" }
