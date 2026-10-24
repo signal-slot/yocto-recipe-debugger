@@ -58,6 +58,9 @@ SEVERITY_UNUSED = "unused"
 MAX_VALUE_LENGTH = 20000
 MAX_DETAIL_LENGTH = 2000
 
+# How long to wait for another BitBake in the build directory to end.
+BUSY_WAIT_SECONDS = 20
+
 
 # ---------------------------------------------------------------------------
 # Pure analysis (no BitBake import; unit tested on the host)
@@ -668,17 +671,24 @@ class Backend(object):
         bb.utils.unlockfile(lock)
         return True
 
-    def wait_for_server_exit(self, timeout=30):
+    def wait_until_free(self, timeout):
+        """Wait until nobody holds bitbake.lock; False on timeout."""
+        import time
+        path = self.lock_path()
+        deadline = time.time() + timeout
+        while not self.try_lock(path):
+            if time.time() >= deadline:
+                return False
+            time.sleep(0.05)
+        return True
+
+    def wait_for_server_exit(self):
         """Tinfoil.shutdown() returns before the BitBake server exits.
 
         Wait until our server releases bitbake.lock, so that the next
         analysis does not take it for a BitBake started by the user.
         """
-        import time
-        path = self.lock_path()
-        deadline = time.time() + timeout
-        while not self.try_lock(path) and time.time() < deadline:
-            time.sleep(0.05)
+        self.wait_until_free(30)
 
     def check_not_busy(self):
         """Do not join a BitBake that is already running in this build.
@@ -686,8 +696,12 @@ class Backend(object):
         Tinfoil would connect to the running server (bitbake.sock).  That
         disturbs the user's build, and fails when the server runs in another
         container.  Test the lock the same way bb.main.lockBitbake() does.
+
+        Short commands, such as the "bitbake -e" that other editor
+        extensions run on save, end in a few seconds, so wait a little
+        before giving up.
         """
-        if not self.try_lock(self.lock_path()):
+        if not self.wait_until_free(BUSY_WAIT_SECONDS):
             raise BackendError("BitBake is running in this build directory. "
                                "The file is analyzed again when it is free.", code="busy")
 

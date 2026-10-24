@@ -45,8 +45,8 @@ includes it). The analysis uses the configuration of your build directory
 (`MACHINE`, `DISTRO`, layers), so results change when the configuration
 changes.
 
-Tested with these poky releases: kirkstone (4.0), langdale (4.1),
-scarthgap (5.0), and walnascar (5.2).
+Tested with these poky releases: kirkstone (4.0, also with Python 3.6),
+langdale (4.1), scarthgap (5.0), and walnascar (5.2).
 
 Not supported yet: `.bbclass` and `.conf` files.
 
@@ -112,6 +112,9 @@ that BitBake can write to the build directory.
   configuration change parses all recipes and can take minutes; later ones
   use the parse cache (a few seconds).
 - The output channel "Yocto Recipe Debugger" shows BitBake's messages.
+- Works together with the official BitBake extension
+  (`yocto-project.yocto-bitbake`, tested with 2.10.0). When it runs
+  `bitbake -e` on save, this extension waits until it ends.
 
 ## Other editors
 

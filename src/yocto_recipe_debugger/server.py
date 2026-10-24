@@ -400,5 +400,7 @@ def did_change_configuration(ls: RecipeServer, params: types.DidChangeConfigurat
 
 
 def main() -> None:
-    logging.basicConfig(level=logging.INFO)
+    # pygls logs every JSON-RPC message at INFO, which hides BitBake's
+    # messages in the output channel.
+    logging.basicConfig(level=logging.WARNING)
     server.start_io()

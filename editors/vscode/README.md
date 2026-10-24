@@ -54,5 +54,8 @@ file is opened or saved.
 - The first analysis after a configuration change parses all recipes and
   can take minutes. Later analyses use the parse cache.
 - The output channel "Yocto Recipe Debugger" shows BitBake's messages.
+- Works together with the official BitBake extension
+  (`yocto-project.yocto-bitbake`, tested with 2.10.0). When it runs
+  `bitbake -e` on save, this extension waits until it ends.
 
 More details: <https://github.com/signal-slot/yocto-recipe-debugger>

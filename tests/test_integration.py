@@ -209,3 +209,21 @@ def test_busy_build_directory_is_not_joined():
         finally:
             fcntl.flock(lock, fcntl.LOCK_UN)
             process.close()
+
+
+def test_short_bitbake_command_is_waited_for():
+    """A lock that is released soon (like "bitbake -e" on save) is not "busy"."""
+    import fcntl
+    import threading
+
+    process = BitbakeProcess(settings())
+    with open(os.path.join(BUILD_DIR, "bitbake.lock"), "a+") as lock:
+        fcntl.flock(lock, fcntl.LOCK_EX)
+        release = threading.Timer(3, fcntl.flock, (lock, fcntl.LOCK_UN))
+        release.start()
+        try:
+            result = process.analyze(str(INC))
+            assert result["recipe"].endswith("yrd-include_1.0.bb")
+        finally:
+            release.join()
+            process.close()
