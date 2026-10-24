@@ -6,6 +6,10 @@ It does not parse recipes by itself. BitBake parses the recipe with
 variable history tracking (the same data as `bitbake -e`), and the server
 reads that history to decide, for each line, whether it has an effect.
 
+[![Demo video: click to play](docs/images/demo.png)](docs/demo.mp4)
+
+Demo video (2 minutes, English captions): [docs/demo.mp4](docs/demo.mp4)
+
 ![Lines with no effect are faded, problems are underlined, and final values are shown at the end of the line](docs/images/overview.png)
 
 ## What it shows
