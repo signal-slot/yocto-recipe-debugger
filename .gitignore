@@ -1,0 +1,8 @@
+.venv/
+.cache/
+__pycache__/
+node_modules/
+*.vsix
+editors/vscode/out/
+editors/vscode/server/
+*.egg-info/

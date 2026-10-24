@@ -1,0 +1,22 @@
+[project]
+name = "yocto-recipe-debugger"
+version = "0.1.0"
+description = "Language server that shows what BitBake really does with a recipe"
+requires-python = ">=3.9"
+dependencies = ["pygls>=2.0,<3"]
+
+[project.optional-dependencies]
+test = ["pytest"]
+
+[project.scripts]
+yocto-recipe-debugger = "yocto_recipe_debugger.server:main"
+
+[build-system]
+requires = ["setuptools>=61"]
+build-backend = "setuptools.build_meta"
+
+[tool.setuptools.packages.find]
+where = ["src"]
+
+[tool.pytest.ini_options]
+testpaths = ["tests"]

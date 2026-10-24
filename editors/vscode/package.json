@@ -1,0 +1,63 @@
+{
+  "name": "yocto-recipe-debugger",
+  "displayName": "Yocto Recipe Debugger",
+  "description": "Shows what BitBake really does with your recipe: unused :append, overwritten values, final values.",
+  "version": "0.1.0",
+  "publisher": "signal-slot",
+  "license": "MIT",
+  "engines": { "vscode": "^1.85.0" },
+  "categories": ["Programming Languages", "Linters"],
+  "activationEvents": [
+    "workspaceContains:**/*.bb",
+    "workspaceContains:**/*.bbappend",
+    "onLanguage:bitbake"
+  ],
+  "main": "./out/extension.js",
+  "contributes": {
+    "languages": [
+      { "id": "bitbake", "aliases": ["BitBake"], "extensions": [".bb", ".bbappend", ".bbclass"] }
+    ],
+    "commands": [
+      { "command": "yoctoRecipeDebugger.restart", "title": "Yocto Recipe Debugger: Restart Server" }
+    ],
+    "configuration": {
+      "title": "Yocto Recipe Debugger",
+      "properties": {
+        "yoctoRecipeDebugger.buildDir": {
+          "type": "string",
+          "default": "",
+          "markdownDescription": "BitBake build directory (the one with `conf/local.conf`). `${workspaceFolder}` is replaced."
+        },
+        "yoctoRecipeDebugger.initScript": {
+          "type": "string",
+          "default": "",
+          "markdownDescription": "Path to `oe-init-build-env`. Empty: search next to the build directory."
+        },
+        "yoctoRecipeDebugger.commandWrapper": {
+          "type": "string",
+          "default": "",
+          "markdownDescription": "Command prefix that enters a build host where BitBake works, for example `docker run --rm -i -v /work:/work my-yocto-image`. Paths must be the same inside and outside. Empty: run on this machine."
+        },
+        "yoctoRecipeDebugger.python": {
+          "type": "string",
+          "default": "python3",
+          "markdownDescription": "Python 3.9+ used to run the language server on this machine (not BitBake)."
+        }
+      }
+    }
+  },
+  "scripts": {
+    "vendor": "rm -rf server && mkdir -p server && mkdir -p server/src && cp -r ../../src/yocto_recipe_debugger server/src/ && uv pip install --quiet --target server/lib 'pygls>=2.0,<3' && find server -name __pycache__ -prune -exec rm -rf {} +",
+    "compile": "tsc -p .",
+    "package": "npm run vendor && npm run compile && vsce package --allow-missing-repository"
+  },
+  "dependencies": {
+    "vscode-languageclient": "^9.0.1"
+  },
+  "devDependencies": {
+    "@types/node": "^20.11.0",
+    "@types/vscode": "^1.85.0",
+    "@vscode/vsce": "^3.2.1",
+    "typescript": "^5.4.0"
+  }
+}
