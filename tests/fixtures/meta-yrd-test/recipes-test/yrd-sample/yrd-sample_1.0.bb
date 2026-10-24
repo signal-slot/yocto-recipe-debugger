@@ -60,3 +60,6 @@ do_install:append:libc-musl() {
 }
 
 BBCLASSEXTEND = "native"
+
+# Reference to a variable that also has package-specific forms.
+YRD_REF = "${RDEPENDS}"

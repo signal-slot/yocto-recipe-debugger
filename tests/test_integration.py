@@ -116,6 +116,13 @@ def test_hover_history_lists_variable_before_overrides(results):
     assert [h["variable"] for h in history] == ["YRD_REPLACED", "YRD_REPLACED:class-target"]
 
 
+def test_package_variables_are_separate_in_hover(results):
+    variables = results[SAMPLE]["variables"]
+    assert "RDEPENDS:yrd-sample-extra" in variables
+    names = {h["variable"] for h in variables["RDEPENDS"]["history"]}
+    assert "RDEPENDS:yrd-sample-extra" not in names
+
+
 def test_variable_values(results):
     variables = results[SAMPLE]["variables"]
     assert variables["YRD_GLUE"]["value"] == "alpha betagamma"

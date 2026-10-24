@@ -905,10 +905,18 @@ class Backend(object):
 
         variables = {}
         for name in sorted(names):
-            # The variable itself first, then its overrides.  Each one is
-            # in parse order; BitBake does not record the order between them.
+            # The variable itself first, then its overrides in the order
+            # they appear in this file.  Each one is in parse order; BitBake
+            # does not record the order between them.
+            def first_line_here(n):
+                lines = [e.get("line") or 0 for e in histories[n] if e.get("file") == path]
+                return (not lines, min(lines) if lines else 0, n)
+            # Package variables (FILES:foo-doc) are separate scopes, the
+            # same way the analysis treats them.
             related = ([name] if name in histories else []) + sorted(
-                n for n in histories if n.startswith(name + ":"))
+                (n for n in histories
+                 if n.startswith(name + ":") and analysis.split_scope(n)[0] == name),
+                key=first_line_here)
             value = value_of(name)
             if value is None and not related:
                 continue

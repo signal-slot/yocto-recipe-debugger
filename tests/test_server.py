@@ -104,3 +104,20 @@ def test_no_inlay_hint_for_functions():
         {"variable": "do_install", "file": PATH, "line": 1, "op": ":append",
          "status": "applied", "function": True}]}})
     assert inlay_hints(Analysis(PATH, list(LINES), result), list(LINES), 0, 10) == []
+
+
+def test_hover_on_assignment_name_uses_recorded_assignment():
+    lines = ['FILES:${PN}-doc = "/usr/share/doc"', 'X = "${FILES}"']
+    result = {"variables": {
+        # The variable itself is listed first, so a naive search finds it.
+        "FILES": {"value": "", "history": [
+            {"variable": "FILES:foo-doc", "file": PATH, "line": 1, "op": "set"}]},
+        "FILES:foo-doc": {"value": "/usr/share/doc", "history": [
+            {"variable": "FILES:foo-doc", "file": PATH, "line": 1, "op": "set"}]},
+    }}
+    a = Analysis(PATH, lines, result)
+    from yocto_recipe_debugger.server import variable_assigned_at
+    assert variable_assigned_at(a, 0, 3) == "FILES:foo-doc"
+    # In the value part, the word under the cursor decides instead.
+    assert variable_assigned_at(a, 0, 25) is None
+    assert variable_assigned_at(a, 1, 8) is None

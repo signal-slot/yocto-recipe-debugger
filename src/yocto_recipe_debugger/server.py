@@ -17,6 +17,7 @@ from pygls.lsp.server import LanguageServer
 from pygls.uris import to_fs_path
 
 from . import __version__
+from .backend import statement_start
 from .bitbake_process import BackendError, BitbakeProcess, BitbakeSettings
 
 SOURCE = "bitbake"
@@ -50,6 +51,11 @@ OPERATORS = {
     "predot": "=.",
 }
 
+# The name part of an assignment or function definition: everything before
+# the operator or "()".
+NAME_PART = re.compile(
+    r"^\s*(?:export\s+)?(?:(?:python|fakeroot)\s+)*[^\s=(]+?(?:\[[^\]]*\])?\s*"
+    r"(?=\?\?=|\?=|:=|\+=|=\+|\.=|=\.|=|\(\s*\))")
 # Characters of a BitBake variable name, including override suffixes.
 WORD_START = re.compile(r"[A-Za-z0-9_\-+./~@%:]*$")
 WORD_END = re.compile(r"^[A-Za-z0-9_\-+./~@%:]*")
@@ -124,6 +130,29 @@ def lookup_variable(variables: dict, word: str) -> Optional[str]:
         if name in variables:
             return name
         parts.pop()
+    return None
+
+
+def variable_assigned_at(analysis: Analysis, line: int, character: int) -> Optional[str]:
+    """Variable assigned by the statement at 0-based ``line``, when the
+    cursor is on its name ("FILES:${PN}-doc" is found as "FILES:foo-doc")."""
+    lines = analysis.lines
+    if line >= len(lines):
+        return None
+    m = NAME_PART.match(lines[line])
+    if not m or character > m.end():
+        return None
+    # The name is on the first line of the statement.  BitBake records the
+    # last line of an assignment and the first line of a function.
+    for name, var in analysis.result.get("variables", {}).items():
+        for e in var.get("history") or []:
+            if e.get("file") != analysis.path or str(e.get("op", "")).startswith("rename"):
+                continue
+            first = e["line"] if e.get("function") else statement_start(lines, e["line"])
+            if first - 1 == line:
+                # Prefer the exact variable ("FILES:foo-doc") when it has
+                # its own entry; overrides ("X:arm") are shown under "X".
+                return e["variable"] if e.get("variable") in analysis.result["variables"] else name
     return None
 
 
@@ -341,8 +370,11 @@ def hover(ls: RecipeServer, params: types.HoverParams) -> Optional[types.Hover]:
     if not analysis:
         return None
     doc = ls.workspace.get_text_document(params.text_document.uri)
-    word = doc.word_at_position(params.position, re_start_word=WORD_START, re_end_word=WORD_END)
-    name = lookup_variable(analysis.result.get("variables", {}), word)
+    name = variable_assigned_at(analysis, params.position.line, params.position.character)
+    if not name:
+        word = doc.word_at_position(params.position, re_start_word=WORD_START,
+                                    re_end_word=WORD_END)
+        name = lookup_variable(analysis.result.get("variables", {}), word)
     if not name:
         return None
     return types.Hover(contents=types.MarkupContent(
