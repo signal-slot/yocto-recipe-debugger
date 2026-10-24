@@ -179,3 +179,21 @@ def test_language_server_end_to_end():
     glue = line_of(SAMPLE, "YRD_GLUE:append") - 1
     labels = {h.position.line: h.label for h in hints}
     assert labels[glue] == "⇒ alpha betagamma"
+
+
+def test_busy_build_directory_is_not_joined():
+    """While another BitBake holds bitbake.lock, the backend must not join it."""
+    import fcntl
+
+    from yocto_recipe_debugger.bitbake_process import BackendError
+
+    process = BitbakeProcess(settings())
+    with open(os.path.join(BUILD_DIR, "bitbake.lock"), "a+") as lock:
+        fcntl.flock(lock, fcntl.LOCK_EX)
+        try:
+            with pytest.raises(BackendError) as excinfo:
+                process.analyze(str(INC))
+            assert excinfo.value.code == "busy"
+        finally:
+            fcntl.flock(lock, fcntl.LOCK_UN)
+            process.close()

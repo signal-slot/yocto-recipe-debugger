@@ -55,6 +55,7 @@ WORD_START = re.compile(r"[A-Za-z0-9_\-+./~@%:]*$")
 WORD_END = re.compile(r"^[A-Za-z0-9_\-+./~@%:]*")
 
 HOVER_HISTORY_LIMIT = 40
+BUSY_RETRY_SECONDS = 30
 INLAY_VALUE_LIMIT = 80
 
 
@@ -276,6 +277,9 @@ class RecipeServer(LanguageServer):
             analysis = None
             diagnostics = [error_diagnostic(path, lines, e)]
             self.log_line("analysis of %s failed: %s" % (path, e))
+            if e.code == "busy":
+                asyncio.get_running_loop().call_later(
+                    BUSY_RETRY_SECONDS, self.retry, uri, generation)
         finally:
             if progress:
                 self.work_done_progress.end(token, types.WorkDoneProgressEnd())
@@ -292,6 +296,16 @@ class RecipeServer(LanguageServer):
             self.workspace_inlay_hint_refresh(None)
         except Exception:
             pass
+
+
+    def retry(self, uri: str, generation: int) -> None:
+        # Skip when the document was closed or analyzed again meanwhile.
+        if self.generation.get(uri) == generation and uri in self.open_documents:
+            asyncio.ensure_future(self.analyze(uri))
+
+    @property
+    def open_documents(self) -> set:
+        return set(self.workspace.text_documents)
 
 
 server = RecipeServer()

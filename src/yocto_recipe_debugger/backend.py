@@ -606,10 +606,12 @@ def referenced_names(text):
 # ---------------------------------------------------------------------------
 
 class BackendError(Exception):
-    def __init__(self, message, file=None, line=None):
+    def __init__(self, message, file=None, line=None, code=None):
         Exception.__init__(self, message)
         self.file = file
         self.line = line
+        # "busy": another BitBake uses the build directory; try again later.
+        self.code = code
 
 
 _realpaths = {}
@@ -646,8 +648,50 @@ class Backend(object):
     def __init__(self, out):
         self.out = out
 
+    @staticmethod
+    def lock_path():
+        import bb.cookerdata
+        topdir = bb.cookerdata.findTopdir()
+        if not topdir:
+            raise BackendError("Cannot find the build directory (conf/bblayers.conf).")
+        return os.path.join(topdir, "bitbake.lock")
+
+    @staticmethod
+    def try_lock(path):
+        """True when nobody holds the lock (it is released again at once)."""
+        import bb.utils
+        lock = bb.utils.lockfile(path, False, False)
+        if lock is None:
+            return False
+        bb.utils.unlockfile(lock)
+        return True
+
+    def wait_for_server_exit(self, timeout=30):
+        """Tinfoil.shutdown() returns before the BitBake server exits.
+
+        Wait until our server releases bitbake.lock, so that the next
+        analysis does not take it for a BitBake started by the user.
+        """
+        import time
+        path = self.lock_path()
+        deadline = time.time() + timeout
+        while not self.try_lock(path) and time.time() < deadline:
+            time.sleep(0.05)
+
+    def check_not_busy(self):
+        """Do not join a BitBake that is already running in this build.
+
+        Tinfoil would connect to the running server (bitbake.sock).  That
+        disturbs the user's build, and fails when the server runs in another
+        container.  Test the lock the same way bb.main.lockBitbake() does.
+        """
+        if not self.try_lock(self.lock_path()):
+            raise BackendError("BitBake is running in this build directory. "
+                               "The file is analyzed again when it is free.", code="busy")
+
     def open_tinfoil(self):
         import bb.tinfoil
+        self.check_not_busy()
         tinfoil = bb.tinfoil.Tinfoil(tracking=True, output=sys.stderr)
         try:
             tinfoil.prepare(config_only=False, quiet=2)
@@ -733,6 +777,7 @@ class Backend(object):
             return self.analyze_with(tinfoil, path)
         finally:
             tinfoil.shutdown()
+            self.wait_for_server_exit()
 
     def analyze_with(self, tinfoil, path):
         try:
@@ -915,7 +960,8 @@ class Backend(object):
             try:
                 response["result"] = self.handle(request)
             except BackendError as e:
-                response["error"] = {"message": str(e), "file": e.file, "line": e.line}
+                response["error"] = {"message": str(e), "file": e.file, "line": e.line,
+                                     "code": e.code}
             except BaseException as e:  # BitBake raises SystemExit on fatal errors
                 if isinstance(e, KeyboardInterrupt):
                     raise

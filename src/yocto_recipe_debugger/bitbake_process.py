@@ -3,6 +3,7 @@
 import itertools
 import json
 import os
+import selectors
 import shlex
 import subprocess
 import threading
@@ -21,10 +22,13 @@ BOOTSTRAP = '. "$1" "$2" >&2 && exec python3 -c "$3"'
 class BackendError(Exception):
     """The backend reported an error, or could not be started."""
 
-    def __init__(self, message: str, file: Optional[str] = None, line: Optional[int] = None):
+    def __init__(self, message: str, file: Optional[str] = None, line: Optional[int] = None,
+                 code: Optional[str] = None):
         super().__init__(message)
         self.file = file
         self.line = line
+        # "busy" when another BitBake uses the build directory.
+        self.code = code
 
 
 @dataclass
@@ -36,6 +40,8 @@ class BitbakeSettings:
     # "docker run --rm -i -v /work:/work image".  Empty runs on the host.
     command_wrapper: str = ""
     extra_env: dict = field(default_factory=dict)
+    # The first analysis after a configuration change parses every recipe.
+    timeout: float = 1800
 
     def resolved_init_script(self) -> str:
         if self.init_script:
@@ -107,6 +113,11 @@ class BitbakeProcess:
                 proc.stdin.flush()
             except BrokenPipeError:
                 pass
+            if not self._wait_readable(proc, self.settings.timeout):
+                proc.kill()
+                proc.wait()
+                self._proc = None
+                raise BackendError("BitBake did not answer in %d seconds." % self.settings.timeout)
             line = proc.stdout.readline()
             if not line:
                 code = proc.wait()
@@ -119,8 +130,14 @@ class BitbakeProcess:
             if "error" in response:
                 err = response["error"]
                 raise BackendError(err.get("message", "unknown error"),
-                                   err.get("file"), err.get("line"))
+                                   err.get("file"), err.get("line"), err.get("code"))
             return response["result"]
+
+    @staticmethod
+    def _wait_readable(proc: subprocess.Popen, timeout: float) -> bool:
+        with selectors.DefaultSelector() as sel:
+            sel.register(proc.stdout, selectors.EVENT_READ)
+            return bool(sel.select(timeout))
 
     def analyze(self, file: str) -> dict:
         return self.request("analyze", {"file": file})
