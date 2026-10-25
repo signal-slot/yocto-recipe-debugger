@@ -6,9 +6,11 @@ It does not parse recipes by itself. BitBake parses the recipe with
 variable history tracking (the same data as `bitbake -e`), and the server
 reads that history to decide, for each line, whether it has an effect.
 
-[![Demo video: click to play](docs/images/demo.png)](docs/demo.mp4)
+![Demo: an :append without a leading space is found, fixed, and saved](docs/images/demo.gif)
 
-Demo video (2 minutes, English captions): [docs/demo.mp4](docs/demo.mp4)
+The full demo (2 minutes, English captions, MP4) is
+[docs/demo.mp4](docs/demo.mp4). It also shows a real Raspberry Pi Zero
+build.
 
 ![Lines with no effect are faded, problems are underlined, and final values are shown at the end of the line](docs/images/overview.png)
 

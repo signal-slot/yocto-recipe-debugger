@@ -6,7 +6,7 @@ BitBake parses the recipe with your build configuration (`MACHINE`,
 `DISTRO`, layers). The extension reads BitBake's variable history and
 shows, for each line, whether it has an effect.
 
-[![Demo video: click to play](https://raw.githubusercontent.com/signal-slot/yocto-recipe-debugger/main/docs/images/demo.png)](https://github.com/signal-slot/yocto-recipe-debugger/blob/main/docs/demo.mp4)
+![Demo: an :append without a leading space is found, fixed, and saved](https://raw.githubusercontent.com/signal-slot/yocto-recipe-debugger/main/docs/images/demo.gif)
 
 ![Lines with no effect are faded, problems are underlined, and final values are shown at the end of the line](https://raw.githubusercontent.com/signal-slot/yocto-recipe-debugger/main/docs/images/overview.png)
 
