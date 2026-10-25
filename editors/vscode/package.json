@@ -14,6 +14,7 @@
   "activationEvents": [
     "workspaceContains:**/*.bb",
     "workspaceContains:**/*.bbappend",
+    "workspaceContains:**/conf/bblayers.conf",
     "onLanguage:bitbake"
   ],
   "main": "./out/extension.js",
@@ -46,6 +47,12 @@
           "type": "string",
           "default": "",
           "markdownDescription": "Command prefix that enters a build host where BitBake works, for example `docker run --rm -i -v /work:/work my-yocto-image`. Paths must be the same inside and outside. Empty: run on this machine."
+        },
+        "yoctoRecipeDebugger.images": {
+          "type": "array",
+          "items": { "type": "string" },
+          "default": [],
+          "markdownDescription": "Images that decide whether a line of a `.conf` file has an effect, for example `[\"core-image-minimal\"]`. Empty: the images built before for this `MACHINE` (up to 3, found in `DEPLOY_DIR_IMAGE`)."
         },
         "yoctoRecipeDebugger.python": {
           "type": "string",

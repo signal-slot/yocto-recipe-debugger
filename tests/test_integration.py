@@ -15,6 +15,7 @@ See README.md for an example.
 """
 
 import asyncio
+import dataclasses
 import os
 import subprocess
 import sys
@@ -123,6 +124,105 @@ def test_plain_functions_are_in_history(results):
     history = variables["do_configure"]["history"]
     assert [(h["file"], h["status"]) for h in history] == [
         (str(SAMPLE), "overwritten"), (str(APPEND), "applied")]
+
+
+# -- configuration files ------------------------------------------------------
+
+def local_conf():
+    return Path(BUILD_DIR) / "conf" / "local.conf"
+
+
+@pytest.fixture(scope="module")
+def conf_results():
+    """local.conf (lines from tests/fixtures/local.conf) with an image, and
+    without one."""
+    with_image = BitbakeProcess(dataclasses.replace(settings(), images=["yrd-image"]))
+    without = BitbakeProcess(settings())
+    try:
+        yield (with_image.analyze(str(local_conf())), without.analyze(str(local_conf())))
+    finally:
+        with_image.close()
+        without.close()
+
+
+@pytest.mark.parametrize("text, expected", [
+    ('MACHINE ?=', ["already-set"]),
+    # core-image sets IMAGE_INSTALL again with "=".
+    ('IMAGE_INSTALL += "yrd-sample"', ["overwritten"]),
+    ('IMAGE_INSTALL:append = " yrd-include"', []),
+    ('IMAGE_INSTALL:append:qemuarm', ["inactive-override"]),
+    # The image has YRD_CONF_BLOCK ?= "a b".
+    ('YRD_CONF_BLOCK +=', ["blocks-default"]),
+    ('YRD_CONF_PN:pn-yrd-sample', []),
+    ('YRD_CONF_PN:pn-yrd-nothing', ["unknown-recipe"]),
+    ('YRD_CONF_NATIVE:class-native', []),
+    ('YRD_CONF_TWICE = "one"', ["overwritten"]),
+    ('YRD_CONF_TWICE = "two"', []),
+    ('RDEPENDS:yrd-sample:append', []),
+])
+def test_local_conf_with_image(conf_results, text, expected):
+    assert found(conf_results[0], local_conf(), text) == expected
+
+
+@pytest.mark.parametrize("text, expected", [
+    ('MACHINE ?=', ["already-set"]),
+    # Fine as far as the configuration knows.
+    ('IMAGE_INSTALL += "yrd-sample"', []),
+    ('IMAGE_INSTALL:append:qemuarm', ["inactive-override"]),
+    ('YRD_CONF_BLOCK +=', []),
+    ('YRD_CONF_PN:pn-yrd-sample', []),
+    ('YRD_CONF_NATIVE:class-native', []),
+])
+def test_local_conf_without_image(conf_results, text, expected):
+    assert found(conf_results[1], local_conf(), text) == expected
+
+
+def test_local_conf_hover_values(conf_results):
+    result, without = conf_results
+    assert result["variants"] == ["configuration", "yrd-image", "yrd-sample"]
+    install = result["variables"]["IMAGE_INSTALL"]
+    assert install["context"] == "yrd-image"
+    assert "yrd-sample" not in install["value"].split()
+    assert "yrd-sample" in install["variants"]["configuration"].split()
+    # Set only for pn-yrd-sample: shown as yrd-sample sees it.
+    pn = result["variables"]["YRD_CONF_PN"]
+    assert (pn["context"], pn["value"]) == ("yrd-sample", "for-sample")
+    assert without["variables"]["IMAGE_INSTALL"]["context"] == "configuration"
+    # Inlay hints: one value for all lines of the variable in the file.
+    assert install["hint"]
+    assert not pn["hint"]  # pn-yrd-sample and pn-yrd-nothing
+    assert not result["variables"]["RDEPENDS"]["hint"]  # package yrd-sample
+    assert not result["variables"]["YRD_CONF_NATIVE"]["hint"]
+
+
+def test_files_included_by_the_configuration():
+    poky = Path(os.environ["YRD_TEST_INIT_SCRIPT"]).parent
+    process = BitbakeProcess(settings())
+    try:
+        # MACHINE = "qemux86-64" includes conf/machine/include/qemu.inc.
+        qemu_inc = poky / "meta" / "conf" / "machine" / "include" / "qemu.inc"
+        qemu = process.analyze(str(qemu_inc))
+        assert "PREFERRED_PROVIDER_virtual/xserver" in qemu["variables"]
+        # KERNEL_FEATURES:append:pn-linux-yocto is decided by linux-yocto.
+        assert qemu["variants"][0] == "configuration" and "linux-yocto" in qemu["variants"]
+        assert found(qemu, qemu_inc, "KERNEL_FEATURES:append:pn-linux-yocto ") == []
+        layer = process.analyze(str(LAYER.parent / "conf" / "layer.conf"))
+        assert "BBFILE_COLLECTIONS" in layer["variables"]
+    finally:
+        process.close()
+
+
+def test_conf_not_in_configuration():
+    from yocto_recipe_debugger.bitbake_process import BackendError
+
+    process = BitbakeProcess(settings())
+    other = LAYER.parent / "conf" / "machine" / "yrd-unused.conf"
+    try:
+        with pytest.raises(BackendError) as excinfo:
+            process.analyze(str(other))
+        assert "does not read this file" in str(excinfo.value)
+    finally:
+        process.close()
 
 
 def test_include(results):

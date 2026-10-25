@@ -27,6 +27,7 @@ Diagnostics (on open and on save):
 | `already-set` | faded | `FOO ?= "a"` when `FOO` already has a value |
 | `default-unused` / `default-discarded` | faded | `FOO ??= "a"` that is never used |
 | `discards-default` | warning | `FOO += "b"` after `FOO ??= "a"`: the result is `" b"` |
+| `blocks-default` | warning | `FOO += "b"` before `FOO ?= "a"` (for example in `local.conf`, before the distro conf): the result is `" b"` |
 | `missing-space` | warning | `FOO:append = "b"`: the result is `"...ab"` |
 | `removed` | info | `FOO:append = " b"` removed again by `FOO:remove = "b"` |
 
@@ -47,16 +48,41 @@ variable in the file.
 
 Supported files: `.bb`, `.bbappend` (analyzed with the recipe that uses it),
 `.inc` (analyzed with a recipe in the same directory, or the one above, that
-includes it). In VS Code, `.inc` files under a `recipes-*` directory are
+includes it), and `.conf` (see below). In VS Code, `.inc` files under a `recipes-*` directory are
 BitBake files; other `.inc` files are analyzed only when the workspace
 has a `.bb` or `.bbappend` file. The analysis uses the configuration of your build directory
 (`MACHINE`, `DISTRO`, layers), so results change when the configuration
 changes.
 
+### Configuration files
+
+`local.conf`, `site.conf`, `auto.conf`, `bblayers.conf`, `layer.conf`, and
+the `.conf` files under `conf/machine`, `conf/distro`, and
+`conf/multiconfig` are analyzed when the current configuration reads them.
+So are the `.inc` files that they include.
+
+Whether a line of a `.conf` file has an effect often depends on the recipe.
+`IMAGE_INSTALL += "foo"` in `local.conf` looks fine in the configuration,
+but an image recipe that sets `IMAGE_INSTALL = "..."` overwrites it. So
+each line is decided where it matters:
+
+- A line with a `pn-foo` override is decided by recipe `foo` (up to 10
+  recipes per file). When there is no such recipe, the line is faded
+  (`unknown-recipe`).
+- A line with a `class-*` override, or another override that only a recipe
+  decides (such as a package name in `RDEPENDS:foo`), is not reported.
+- Other lines are decided by the images: the ones in the `images` setting,
+  or else the images built before for this `MACHINE` (up to 3, found in
+  `DEPLOY_DIR_IMAGE`). Without an image, they are decided by the
+  configuration.
+
+Hover shows the value as the image (or recipe `foo`) sees it, and the value
+in the configuration and the other recipes.
+
 Tested with these poky releases: kirkstone (4.0, also with Python 3.6),
 langdale (4.1), scarthgap (5.0), and walnascar (5.2).
 
-Not supported yet: `.bbclass` and `.conf` files.
+Not supported yet: `.bbclass` files.
 
 ## Layout
 
@@ -85,9 +111,13 @@ Settings (`.vscode/settings.json` of the workspace):
 {
   "yoctoRecipeDebugger.buildDir": "${workspaceFolder}/build",
   "yoctoRecipeDebugger.initScript": "${workspaceFolder}/poky/oe-init-build-env",
-  "yoctoRecipeDebugger.commandWrapper": ""
+  "yoctoRecipeDebugger.commandWrapper": "",
+  "yoctoRecipeDebugger.images": ["core-image-minimal"]
 }
 ```
+
+`images` names the images that decide the lines of `.conf` files (see
+above). It can be empty.
 
 `initScript` can be empty when `oe-init-build-env` is next to the build
 directory (for example `<top>/poky/oe-init-build-env` and `<top>/build`).
@@ -128,7 +158,7 @@ that BitBake can write to the build directory.
 
 Any LSP client works. Start `python3 -m yocto_recipe_debugger` (with
 `pygls` installed) and pass the settings as `initializationOptions`:
-`{"buildDir": ..., "initScript": ..., "commandWrapper": ...}`.
+`{"buildDir": ..., "initScript": ..., "commandWrapper": ..., "images": [...]}`.
 
 ## Tests
 

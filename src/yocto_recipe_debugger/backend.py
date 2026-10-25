@@ -65,6 +65,11 @@ MAX_DETAIL_LENGTH = 2000
 # How long to wait for another BitBake in the build directory to end.
 BUSY_WAIT_SECONDS = 20
 
+# Recipes parsed for a .conf file: built images, and recipes named by
+# pn-* overrides.  Each one takes a few seconds.
+MAX_IMAGES = 3
+MAX_PN_RECIPES = 10
+
 
 # ---------------------------------------------------------------------------
 # Pure analysis (no BitBake import; unit tested on the host)
@@ -73,14 +78,17 @@ BUSY_WAIT_SECONDS = 20
 class Finding(object):
     """One statement about one history event in one recipe variant."""
 
-    __slots__ = ("code", "severity", "message", "effective")
+    __slots__ = ("code", "severity", "message", "effective", "by")
 
-    def __init__(self, code, severity, message, effective):
+    def __init__(self, code, severity, message, effective, by=None):
         self.code = code
         self.severity = severity
         self.message = message
         # False when the finding means "this operation has no effect".
         self.effective = effective
+        # The override variable that wins over this one, if that is the
+        # reason ("FOO:arm" for "FOO = a").
+        self.by = by
 
 
 def event_key(event):
@@ -263,7 +271,7 @@ class VariantAnalysis(object):
                         self.add(event, Finding(
                             "shadowed-override", SEVERITY_UNUSED,
                             "Not applied: %s takes precedence over %s%s."
-                            % (provider, name, self.at(provider_event)), False))
+                            % (provider, name, self.at(provider_event)), False, by=provider))
                 continue
             self.analyze_content(name, events, replaced_by=(None if name == provider else provider))
             self.analyze_keyword_ops(name, events, value_name=scope)
@@ -295,6 +303,7 @@ class VariantAnalysis(object):
         """Follow "=", "?=", "+=", ... in parse order (DataNode.eval)."""
         contributors = []   # events that make up the current content
         defaults = []       # "??=" events
+        blocked = []        # ("+=" event, "?=" event that it made useless)
         has_content = False
         for event in events:
             flag = event.get("flag")
@@ -317,6 +326,10 @@ class VariantAnalysis(object):
                         "already-set", SEVERITY_UNUSED,
                         "No effect: %s already has a value from %s."
                         % (name, where(contributors[-1])), False))
+                    # "FOO += a" before "FOO ?= b c" gives " a", not "b c a".
+                    if (all(e.get("op") in OP_ADD for e in contributors)
+                            and (self.safe_expand(event.get("detail") or "") or "").strip()):
+                        blocked.append((contributors[0], event))
                 else:
                     contributors = [event]
                     has_content = True
@@ -362,13 +375,26 @@ class VariantAnalysis(object):
             if defaults:
                 contributors = [defaults[-1]]
 
+        reported = set()
+        for first, default in blocked:
+            if not any(c is first for c in contributors) or id(first) in reported:
+                continue
+            reported.add(id(first))
+            self.add(first, Finding(
+                "blocks-default", SEVERITY_WARNING,
+                "This operation comes before the ?= at %s, so that default is not used. "
+                "%s becomes '%s'. Use %s:%s instead."
+                % (where(default), name, (self.value_of(name) or "").strip(),
+                   name, "prepend" if first.get("op") in ("prepend", "predot") else "append"),
+                True))
+
         if replaced_by:
             replacer = self.first_content_event(replaced_by)
             for event in contributors:
                 self.add(event, Finding(
                     "replaced-by-override", SEVERITY_UNUSED,
                     "No effect: %s replaces this value%s."
-                    % (replaced_by, self.at(replacer)), False))
+                    % (replaced_by, self.at(replacer)), False, by=replaced_by))
 
     def analyze_keyword_ops(self, name, events, value_name):
         """Check :append / :prepend / :remove of a name that is in the chain."""
@@ -500,13 +526,17 @@ def is_internal(event):
     return (event.get("file") or "").endswith(".py")
 
 
-def merge_variants(per_variant, target_files):
+def merge_variants(per_variant, target_files, voters=None):
     """Combine findings of all variants into diagnostics for target files.
 
     ``per_variant`` is a list of (variant name, VariantAnalysis, histories).
     An operation is reported as having no effect only when it has no effect
     in every variant; ":append:class-native" is fine when the recipe has a
     native variant.
+
+    ``voters`` optionally maps an event key to the variants that decide
+    about it.  Other variants are ignored for that event, and an event
+    without an entry is not reported.
     """
     seen = {}      # event key -> event
     results = {}   # event key -> [(variant, [Finding])]
@@ -516,6 +546,8 @@ def merge_variants(per_variant, target_files):
                 if event.get("file") not in target_files:
                     continue
                 key = event_key(event)
+                if voters is not None and variant not in voters.get(key, ()):
+                    continue
                 seen.setdefault(key, event)
                 results.setdefault(key, []).append(
                     (variant, analysis.findings.get(key, [])))
@@ -548,6 +580,79 @@ def merge_variants(per_variant, target_files):
                 })
     diagnostics.sort(key=lambda d: (d["file"], d["line"] or 0, d["code"]))
     return diagnostics
+
+
+# Override prefixes that are only resolved when a recipe is parsed:
+# pn-${PN} and ${CLASSOVERRIDE} in OVERRIDES (bitbake.conf), layer-* (the
+# layer of the recipe), virtclass-* (multilib) and task-* (task execution).
+RECIPE_OVERRIDE_RE = re.compile(r"^(?:pn|class|virtclass|layer|task)-")
+
+# Who decides whether a line of a .conf file has an effect.
+CONF_GLOBAL = "global"    # the images, or the configuration without images
+CONF_RECIPE = "recipe"    # the recipes named by pn-* overrides
+CONF_UNKNOWN = "unknown"  # depends on recipes that are not known
+
+
+def override_parts(name, event):
+    """Override parts of an event: "X:a:b" and ":append[c]" give a, b, c."""
+    parts = name.split(":")[1:]
+    m = KEYWORD_OP_RE.match(event.get("op") or "")
+    if m and m.group(2):
+        parts += m.group(2).split(":")
+    return [p for p in parts if OVERRIDE_RE.match(p)]
+
+
+def classify_conf_event(parts, config_overrides, recipe_names):
+    """Return (kind, recipe names) for a .conf event with override ``parts``.
+
+    The configuration knows MACHINE, DISTRO, the architecture and the C
+    library, so an override of another machine is decided there (or in an
+    image).  pn-foo is decided by recipe foo.  class-* and the other recipe
+    overrides differ between recipes even when the configuration has them
+    (class-target is not active in native recipes).  An override that is
+    not active in the configuration may also be a package name, as in
+    "RDEPENDS:packagegroup-base".
+    """
+    pns = [p[len("pn-"):] for p in parts if p.startswith("pn-")]
+    if pns:
+        return CONF_RECIPE, pns
+    for part in parts:
+        if RECIPE_OVERRIDE_RE.match(part):
+            return CONF_UNKNOWN, []
+        if part in config_overrides:
+            continue
+        # A package is named after its recipe: "foo", "foo-dev".
+        words = part.split("-")
+        if any("-".join(words[:i]) in recipe_names for i in range(1, len(words) + 1)):
+            return CONF_UNKNOWN, []
+    return CONF_GLOBAL, []
+
+
+def has_recipe_override(name):
+    """True for "FOO:class-target" and other overrides decided per recipe
+    (pn-* excluded: the recipe is known)."""
+    return any(RECIPE_OVERRIDE_RE.match(p) and not p.startswith("pn-")
+               for p in name.split(":")[1:])
+
+
+def images_from_manifests(entries, machine, recipe_names, limit):
+    """Names of images built for ``machine``, newest first.
+
+    ``entries`` are (file name, modification time) in DEPLOY_DIR_IMAGE.
+    Manifests are named "<image>-<machine>.manifest" (kirkstone) or
+    "<image>-<machine>.rootfs.manifest", with or without a time stamp.
+    """
+    found = []
+    for name, mtime in sorted(entries, key=lambda e: -e[1]):
+        if not name.endswith(".manifest"):
+            continue
+        i = name.rfind("-" + machine)
+        if i <= 0 or name[i + len(machine) + 1] not in ".-":
+            continue
+        image = name[:i]
+        if image in recipe_names and image not in found:
+            found.append(image)
+    return found[:limit]
 
 
 def status_of(findings):
@@ -844,18 +949,26 @@ class Backend(object):
         path = os.path.realpath(params["file"])
         tinfoil = self.open_tinfoil()
         try:
-            return self.analyze_with(tinfoil, path)
+            return self.analyze_with(tinfoil, path, params.get("images") or [])
         finally:
             tinfoil.shutdown()
             self.wait_for_server_exit()
 
-    def analyze_with(self, tinfoil, path):
+    def analyze_with(self, tinfoil, path, images=()):
         try:
             with open(path, errors="replace") as fp:
                 source = fp.read()
         except OSError as e:
             raise BackendError("Cannot read %s: %s" % (path, e))
         lines = source.splitlines()
+
+        if path in self.conf_files(tinfoil):
+            return self.analyze_conf(tinfoil, path, lines, source, images)
+        if path.endswith(".conf"):
+            config = tinfoil.config_data
+            raise BackendError("The current configuration (MACHINE = %s, DISTRO = %s) "
+                               "does not read this file."
+                               % (config.getVar("MACHINE"), config.getVar("DISTRO")))
 
         last_error = None
         for recipe in self.recipes_for(tinfoil, path):
@@ -891,59 +1004,75 @@ class Backend(object):
             except Exception as e:
                 sys.stderr.write("yrd: cannot parse variant %s of %s: %s\n" % (variant, recipe, e))
 
-        result = []
-        for variant, data in datastores:
-            histories = {}
-            names = list(data.keys())
-            for name in names:
-                events = []
-                for event in data.varhistory.variable(name):
-                    if event.get("file"):
-                        event["file"] = realpath(event["file"])
-                    if not is_internal(event):
-                        events.append(event)
-                if events:
-                    histories[name] = events
-            # Function definitions are missing from the history (only
-            # ast.py events, which are internal).  The flags keep the last
-            # definition of each name.
-            last_definition = {}
-            for name in names:
-                found = function_event(name, data.getVarFlags(name) or {})
-                if found:
-                    owner, event = found
+        return [(variant,) + self.analyze_data(data, path, lines)
+                for variant, data in datastores]
+
+    def analyze_data(self, data, path, lines):
+        """Analyze one parsed datastore (a recipe variant or the
+        configuration).  Returns (analysis, histories, (data, value_of,
+        overrides))."""
+        return self.analyze_histories(data, self.read_histories(data, path, lines))
+
+    def read_histories(self, data, path, lines):
+        """{variable: [event]} of ``data``.  Only reads the datastore."""
+        histories = {}
+        names = list(data.keys())
+        for name in names:
+            events = []
+            for event in data.varhistory.variable(name):
+                if event.get("file"):
                     event["file"] = realpath(event["file"])
-                    histories.setdefault(owner, []).append(event)
-                    last_definition[name] = (owner, event)
-            self.add_replaced_definitions(data, path, lines, histories, last_definition)
-            packages = (data.getVar("PACKAGES") or "").split()
-            dynamic = []
-            for pattern in (data.getVar("PACKAGES_DYNAMIC") or "").split():
+                if not is_internal(event):
+                    events.append(event)
+            if events:
+                histories[name] = events
+        # Function definitions are missing from the history (only ast.py
+        # events, which are internal).  The flags keep the last definition
+        # of each name.
+        last_definition = {}
+        for name in names:
+            found = function_event(name, data.getVarFlags(name) or {})
+            if found:
+                owner, event = found
+                event["file"] = realpath(event["file"])
+                histories.setdefault(owner, []).append(event)
+                last_definition[name] = (owner, event)
+        self.add_replaced_definitions(data, path, lines, histories, last_definition)
+        return histories
+
+    @staticmethod
+    def analyze_histories(data, histories):
+        """Analyze histories read from ``data``.
+
+        Expanding values can change the datastore: bb.fetch2.get_srcrev()
+        (SRCPV) sets a variable.  A recipe parsed from a changed
+        configuration fails with "AUTOREV/SRCPV set too late", so analyze
+        the configuration only after the recipes are parsed.
+        """
+        packages = (data.getVar("PACKAGES") or "").split()
+        dynamic = []
+        for pattern in (data.getVar("PACKAGES_DYNAMIC") or "").split():
+            try:
+                dynamic.append(re.compile(pattern))
+            except re.error:
+                pass
+        overrides = [o for o in (data.getVar("OVERRIDES") or "").split(":") if o]
+        cache = {}
+
+        def value_of(name):
+            if name not in cache:
                 try:
-                    dynamic.append(re.compile(pattern))
-                except re.error:
-                    pass
-            overrides = [o for o in (data.getVar("OVERRIDES") or "").split(":") if o]
-            cache = {}
+                    value = data.getVar(name)
+                except Exception:
+                    value = None
+                # Internal variables (__BBANONFUNCS, ...) hold lists and
+                # sets; only text values are meaningful here.
+                cache[name] = value if isinstance(value, str) else None
+            return cache[name]
 
-            def value_of(name, data=data, cache=cache):
-                if name not in cache:
-                    try:
-                        value = data.getVar(name)
-                    except Exception:
-                        value = None
-                    # Internal variables (__BBANONFUNCS, ...) hold lists
-                    # and sets; only text values are meaningful here.
-                    cache[name] = value if isinstance(value, str) else None
-                return cache[name]
-
-            def expand(text, data=data):
-                return data.expand(text)
-
-            analysis = VariantAnalysis(histories, overrides, packages, dynamic,
-                                       expand, value_of).run()
-            result.append((variant, analysis, histories, (data, value_of, overrides)))
-        return result
+        analysis = VariantAnalysis(histories, overrides, packages, dynamic,
+                                   data.expand, value_of).run()
+        return analysis, histories, (data, value_of, overrides)
 
     @staticmethod
     def add_replaced_definitions(data, path, lines, histories, last_definition):
@@ -971,9 +1100,9 @@ class Backend(object):
         line = getattr(exc, "lineno", None)
         return BackendError("BitBake cannot parse the recipe: %s" % exc, file, line)
 
-    def build_result(self, path, lines, source, recipe, variants):
-        per_variant = [(v, a, h) for v, a, h, _ in variants]
-        diagnostics = merge_variants(per_variant, set([path]))
+    @staticmethod
+    def finish_diagnostics(diagnostics, lines):
+        """Turn the recorded line of each diagnostic into a line range."""
         for diag in diagnostics:
             if diag.pop("line_is_start", False):
                 diag["end_line"] = statement_end(lines, diag["line"])
@@ -981,63 +1110,236 @@ class Backend(object):
                 end = diag["line"] or 1
                 diag["end_line"] = end
                 diag["line"] = statement_start(lines, end)
+        return diagnostics
 
-        default_variant = variants[0]
-        _, analysis, histories, (data, value_of, overrides) = default_variant
-
-        # Variables shown on hover: names assigned or referenced in the
-        # file, and every variable that has an event in the file.
+    @staticmethod
+    def shown_names(path, source, analysis, histories):
+        """Variables shown on hover: names assigned or referenced in the
+        file, and every variable that has an event in the file."""
         names = referenced_names(source)
         for name, events in histories.items():
             if any(e.get("file") == path for e in events):
                 names.add(analysis.split_scope(name)[0])
+        return names
 
+    @staticmethod
+    def describe_variable(path, name, analysis, histories, value_of, others):
+        """Hover data of ``name``; ``others`` is [(label, value_of)] of the
+        other variants.  None when the variable is unknown."""
+        # The variable itself first, then its overrides in the order they
+        # appear in this file.  Each one is in parse order; BitBake does not
+        # record the order between them.
+        def first_line_here(n):
+            lines = [e.get("line") or 0 for e in histories[n] if e.get("file") == path]
+            return (not lines, min(lines) if lines else 0, n)
+        # Package variables (FILES:foo-doc) are separate scopes, the same
+        # way the analysis treats them.
+        related = ([name] if name in histories else []) + sorted(
+            (n for n in histories
+             if n.startswith(name + ":") and analysis.split_scope(n)[0] == name),
+            key=first_line_here)
+        value = value_of(name)
+        if value is None and not related:
+            return None
+        history = []
+        for n in related:
+            for event in histories[n]:
+                if event.get("flag") and event.get("flag") != FLAG_DEFAULT:
+                    continue
+                history.append({
+                    "variable": n,
+                    "file": event.get("file"),
+                    "line": event.get("line"),
+                    "op": event.get("op"),
+                    "flag": event.get("flag"),
+                    "detail": clip(event.get("detail"), MAX_DETAIL_LENGTH),
+                    "status": status_of(analysis.findings.get(event_key(event), [])),
+                    "function": bool(event.get("function")),
+                })
+        return {
+            "value": clip(value, MAX_VALUE_LENGTH),
+            "variants": dict((label, clip(other(name), MAX_VALUE_LENGTH))
+                             for label, other in others),
+            "history": history,
+        }
+
+    def build_result(self, path, lines, source, recipe, variants):
+        per_variant = [(v, a, h) for v, a, h, _ in variants]
+        diagnostics = self.finish_diagnostics(merge_variants(per_variant, set([path])), lines)
+
+        _, analysis, histories, (_, value_of, overrides) = variants[0]
+        others = [(v, vvalue_of) for v, _, _, (_, vvalue_of, _) in variants[1:]]
         variables = {}
-        for name in sorted(names):
-            # The variable itself first, then its overrides in the order
-            # they appear in this file.  Each one is in parse order; BitBake
-            # does not record the order between them.
-            def first_line_here(n):
-                lines = [e.get("line") or 0 for e in histories[n] if e.get("file") == path]
-                return (not lines, min(lines) if lines else 0, n)
-            # Package variables (FILES:foo-doc) are separate scopes, the
-            # same way the analysis treats them.
-            related = ([name] if name in histories else []) + sorted(
-                (n for n in histories
-                 if n.startswith(name + ":") and analysis.split_scope(n)[0] == name),
-                key=first_line_here)
-            value = value_of(name)
-            if value is None and not related:
-                continue
-            history = []
-            for n in related:
-                for event in histories[n]:
-                    if event.get("flag") and event.get("flag") != FLAG_DEFAULT:
-                        continue
-                    history.append({
-                        "variable": n,
-                        "file": event.get("file"),
-                        "line": event.get("line"),
-                        "op": event.get("op"),
-                        "flag": event.get("flag"),
-                        "detail": clip(event.get("detail"), MAX_DETAIL_LENGTH),
-                        "status": status_of(analysis.findings.get(event_key(event), [])),
-                        "function": bool(event.get("function")),
-                    })
-            other = {}
-            for variant, _, _, (vdata, vvalue_of, _) in variants[1:]:
-                other[variant] = clip(vvalue_of(name), MAX_VALUE_LENGTH)
-            variables[name] = {
-                "value": clip(value, MAX_VALUE_LENGTH),
-                "variants": other,
-                "history": history,
-            }
+        for name in sorted(self.shown_names(path, source, analysis, histories)):
+            entry = self.describe_variable(path, name, analysis, histories, value_of, others)
+            if entry:
+                variables[name] = entry
 
         return {
             "file": path,
             "recipe": recipe,
             "variants": [v or "target" for v, _, _, _ in variants],
             "overrides": ":".join(overrides),
+            "diagnostics": diagnostics,
+            "variables": variables,
+        }
+
+    # -- configuration files ---------------------------------------------
+
+    @staticmethod
+    def conf_files(tinfoil):
+        """Files that the configuration includes (.conf and their .inc)."""
+        return set(realpath(f) for f in
+                   (tinfoil.config_data.getVar("BBINCLUDED") or "").split())
+
+    def built_images(self, tinfoil, recipe_names):
+        config = tinfoil.config_data
+        deploy = config.getVar("DEPLOY_DIR_IMAGE") or ""
+        entries = []
+        try:
+            names = os.listdir(deploy)
+        except OSError:
+            return []
+        for name in names:
+            try:
+                entries.append((name, os.path.getmtime(os.path.join(deploy, name))))
+            except OSError:
+                pass
+        return images_from_manifests(entries, config.getVar("MACHINE") or "",
+                                     recipe_names, MAX_IMAGES)
+
+    def parse_context(self, tinfoil, name, path, lines):
+        """Analyze recipe ``name`` (no BBCLASSEXTEND variants) for a .conf
+        file.  Returns the analyze_data() tuple, or raises BackendError."""
+        try:
+            fn = tinfoil.get_recipe_file(name)
+        except Exception:
+            raise BackendError("There is no recipe named '%s' in the current configuration."
+                               % name)
+        try:
+            data = tinfoil.parse_recipe_file(fn)
+        except Exception as e:
+            raise self.parse_error(e)
+        return self.analyze_data(data, path, lines)
+
+    def analyze_conf(self, tinfoil, path, lines, source, images):
+        """Analyze a configuration file (local.conf, a machine conf, ...).
+
+        Each line is decided in the datastores where it matters (see
+        classify_conf_event): the images, the recipes named by pn-*
+        overrides, or the configuration when no image is known.  The
+        configuration alone is not enough: "IMAGE_INSTALL += foo" in
+        local.conf looks fine there, but an image recipe sets IMAGE_INSTALL
+        again with "=".
+        """
+        config = tinfoil.config_data
+        config_histories = self.read_histories(config, path, lines)
+        recipe_names = set(tinfoil.cooker.recipecaches[""].pkg_pn)
+        here = {}    # event key -> (variable, event) of the events in this file
+        wanted = []  # recipes named by pn-* overrides, in file order
+        for name, events in config_histories.items():
+            for event in events:
+                if event.get("file") == path:
+                    here[event_key(event)] = (name, event)
+        for name, event in sorted(here.values(), key=lambda ne: ne[1].get("line") or 0):
+            for part in override_parts(name, event):
+                if part.startswith("pn-") and part[len("pn-"):] not in wanted:
+                    wanted.append(part[len("pn-"):])
+
+        contexts = []
+        notes = []
+        if not images:
+            images = self.built_images(tinfoil, recipe_names)
+        image_labels = []
+        for image in images:
+            try:
+                contexts.append((image,) + self.parse_context(tinfoil, image, path, lines))
+                image_labels.append(image)
+            except BackendError as e:
+                notes.append("Image %s: %s" % (image, e))
+        recipe_errors = {}
+        for pn in wanted[:MAX_PN_RECIPES]:
+            if pn in image_labels:
+                continue
+            try:
+                contexts.append((pn,) + self.parse_context(tinfoil, pn, path, lines))
+            except BackendError as e:
+                recipe_errors[pn] = str(e)
+        # Only now that the recipes are parsed (see analyze_histories).
+        contexts.insert(0, ("configuration",) + self.analyze_histories(config, config_histories))
+        _, config_analysis, _, (_, _, config_overrides) = contexts[0]
+        labels = set(c[0] for c in contexts)
+
+        kinds = {}   # event key -> (kind, recipe names)
+        for key, (name, event) in here.items():
+            kinds[key] = classify_conf_event(override_parts(name, event),
+                                             set(config_overrides), recipe_names)
+
+        # A recipe override such as class-target can make "FOO = a" look
+        # replaced, but native recipes still use "a".
+        for _, analysis, _, _ in contexts:
+            for key, findings in analysis.findings.items():
+                if kinds.get(key, (None,))[0] == CONF_GLOBAL:
+                    findings[:] = [f for f in findings
+                                   if not (f.by and has_recipe_override(f.by))]
+
+        voters = {}
+        diagnostics = []
+        for key, (name, event) in here.items():
+            kind, pns = kinds[key]
+            if kind == CONF_GLOBAL:
+                voters[key] = set(image_labels or ["configuration"])
+            elif kind == CONF_RECIPE:
+                voters[key] = set(pn for pn in pns if pn in labels)
+                missing = [recipe_errors[pn] for pn in pns if pn in recipe_errors]
+                if missing and VariantAnalysis.is_value_event(event):
+                    diagnostics.append({
+                        "file": path, "line": event.get("line"),
+                        "line_is_start": bool(event.get("line_is_start")),
+                        "code": "unknown-recipe", "severity": SEVERITY_UNUSED,
+                        "message": "Not applied: " + missing[0]})
+        per_variant = [(label, a, h) for label, a, h, _ in contexts]
+        diagnostics += merge_variants(per_variant, set([path]), voters)
+        diagnostics.sort(key=lambda d: (d["file"], d["line"] or 0, d["code"]))
+        for note in notes:
+            diagnostics.insert(0, {"file": path, "line": 1, "line_is_start": True,
+                                   "code": "image", "severity": SEVERITY_INFO,
+                                   "message": note})
+        self.finish_diagnostics(diagnostics, lines)
+
+        # Hover: a variable is shown as an image sees it, or as recipe foo
+        # sees it when this file only sets it for pn-foo.
+        by_label = dict((c[0], c) for c in contexts)
+        default = by_label[image_labels[0]] if image_labels else contexts[0]
+        scope_kinds = {}  # variable -> kinds of its events (and overrides) here
+        for key, (name, _) in here.items():
+            scope_kinds.setdefault(config_analysis.split_scope(name)[0], []).append(kinds[key])
+        variables = {}
+        for name in sorted(self.shown_names(path, source, config_analysis, config_histories)):
+            found = scope_kinds.get(name, [])
+            context = default
+            if found and all(kind == CONF_RECIPE for kind, _ in found):
+                parsed = [pn for _, pns in found for pn in pns if pn in by_label]
+                if parsed:
+                    context = by_label[parsed[0]]
+            label, analysis, histories, (_, value_of, _) = context
+            others = [(c[0], c[3][1]) for c in contexts if c[0] != label]
+            entry = self.describe_variable(path, name, analysis, histories, value_of, others)
+            if entry:
+                entry["context"] = label
+                # The inlay hint shows one value for the lines in this file.
+                # Lines for different recipes ("pn-a", "pn-b") or for
+                # packages ("RDEPENDS:foo") have no such value.
+                entry["hint"] = (all(kind == CONF_GLOBAL for kind, _ in found) or
+                                 set((kind, tuple(pns)) for kind, pns in found)
+                                 == set([(CONF_RECIPE, (label,))]))
+                variables[name] = entry
+
+        return {
+            "file": path,
+            "recipe": "",
+            "variants": [c[0] for c in contexts],
+            "overrides": ":".join(default[3][2]),
             "diagnostics": diagnostics,
             "variables": variables,
         }

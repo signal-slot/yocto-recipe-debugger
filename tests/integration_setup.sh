@@ -2,7 +2,8 @@
 # Copyright (C) 2026 Signal Slot Inc.
 # SPDX-License-Identifier: MIT
 
-# Create a throw-away build directory that adds the fixture layer.
+# Create a throw-away build directory that adds the fixture layer and
+# the lines of fixtures/local.conf.
 # Usage: tests/integration_setup.sh <poky dir> <build dir>
 set -eu
 POKY=$(realpath "$1")
@@ -17,4 +18,5 @@ MACHINE = "qemux86-64"
 DISTRO = "poky"
 CONF_VERSION = "2"
 CONF
+cat "$(dirname "$0")/fixtures/local.conf" >> "$BUILD/conf/local.conf"
 echo "$BUILD"

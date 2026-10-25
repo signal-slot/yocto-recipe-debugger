@@ -90,6 +90,18 @@ def test_hover_shows_value_variants_and_status():
     assert "(file:///layer/foo.bb#L2)" in text
 
 
+def test_hover_of_conf_file_names_the_image():
+    conf = "/build/conf/local.conf"
+    result = {"file": conf, "recipe": "", "variants": ["configuration", "core-image-minimal"],
+              "variables": {"IMAGE_INSTALL": {
+                  "value": "packagegroup-core-boot", "context": "core-image-minimal",
+                  "variants": {"configuration": " foo"},
+                  "history": []}}}
+    text = hover_markdown(result, "IMAGE_INSTALL")
+    assert text.startswith("**IMAGE_INSTALL** — core-image-minimal\n")
+    assert "configuration:" in text and " foo" in text
+
+
 def test_inlay_hint_on_last_assignment_line():
     hints = inlay_hints(analysis(), list(LINES), 0, 10)
     assert [(h.position.line, h.label) for h in hints] == [(1, "⇒ a"), (3, "⇒ x y")]
@@ -100,6 +112,13 @@ def test_inlay_hint_hidden_when_line_was_edited():
     edited[1] = 'FOO:append = " c"'
     hints = inlay_hints(analysis(), edited, 0, 10)
     assert [h.position.line for h in hints] == [3]
+
+
+def test_no_inlay_hint_when_backend_says_so():
+    result = dict(RESULT, variables=dict(RESULT["variables"]))
+    result["variables"]["BAR"] = dict(result["variables"]["BAR"], hint=False)
+    hints = inlay_hints(Analysis(path=PATH, lines=list(LINES), result=result), list(LINES), 0, 10)
+    assert [h.position.line for h in hints] == [1]
 
 
 def test_no_inlay_hint_for_functions():

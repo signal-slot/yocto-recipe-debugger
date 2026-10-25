@@ -24,7 +24,7 @@ from .backend import statement_start
 from .bitbake_process import BackendError, BitbakeProcess, BitbakeSettings
 
 SOURCE = "bitbake"
-RECIPE_SUFFIXES = (".bb", ".bbappend", ".inc")
+RECIPE_SUFFIXES = (".bb", ".bbappend", ".inc", ".conf")
 
 SEVERITIES = {
     "warning": types.DiagnosticSeverity.Warning,
@@ -179,7 +179,10 @@ def file_link(path: str, line) -> str:
 def hover_markdown(result: dict, name: str) -> str:
     var = result["variables"][name]
     variants = result.get("variants") or ["target"]
-    blocks = ["**%s** — %s (%s)" % (name, result["recipe"].rsplit("/", 1)[-1], variants[0])]
+    if var.get("context"):  # .conf files: the image or recipe that shows the value
+        blocks = ["**%s** — %s" % (name, var["context"])]
+    else:
+        blocks = ["**%s** — %s (%s)" % (name, result["recipe"].rsplit("/", 1)[-1], variants[0])]
     value = var.get("value")
     blocks.append(code_block(value) if value is not None else "_not set_")
     for variant, other in (var.get("variants") or {}).items():
@@ -217,7 +220,8 @@ def inlay_hints(analysis: Analysis, current_lines: list, first: int, last: int) 
     hints = []
     for name, var in analysis.result.get("variables", {}).items():
         value = var.get("value")
-        if value is None:
+        # "hint" is false when the lines in the file have no single value.
+        if value is None or not var.get("hint", True):
             continue
         # "rename" events repeat an assignment under its expanded name.  The
         # "value" of a function is its body, which does not fit in a hint.
@@ -271,6 +275,7 @@ class RecipeServer(LanguageServer):
             build_dir=build_dir,
             init_script=options.get("initScript") or "",
             command_wrapper=options.get("commandWrapper") or "",
+            images=list(options.get("images") or []),
         )
         self.process = BitbakeProcess(settings, on_stderr=self.log_line)
 

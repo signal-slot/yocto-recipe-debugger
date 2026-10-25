@@ -122,6 +122,39 @@ def test_weak_default_discarded_by_plus_equals():
     assert codes(a, add) == ["discards-default"]
 
 
+def test_plus_equals_before_set_if_unset_blocks_default():
+    # DISTRO_FEATURES += "x" in local.conf, then ?= in the distro conf.
+    add = ev("X", 1, "append", "extra", file="/build/conf/local.conf")
+    q = ev("X", 20, "set?", "a b", file="/layer/conf/distro/d.conf")
+    a = analyze({"X": [add, q]}, {"X": " extra"})
+    assert codes(a, q) == ["already-set"]
+    assert codes(a, add) == ["blocks-default"]
+    (finding,) = a.findings[backend.event_key(add)]
+    assert finding.effective
+    assert "d.conf:20" in finding.message and "X:append" in finding.message
+
+
+def test_blocks_default_ignores_empty_default():
+    add = ev("X", 1, "append", "extra")
+    q = ev("X", 2, "set?", "")
+    a = analyze({"X": [add, q]}, {"X": " extra"})
+    assert codes(a, add) == []
+
+
+def test_blocks_default_not_reported_when_overwritten_later():
+    add = ev("X", 1, "append", "extra")
+    q = ev("X", 2, "set?", "a b")
+    a = analyze({"X": [add, q, ev("X", 3, detail="c")]}, {"X": "c"})
+    assert codes(a, add) == ["overwritten"]
+
+
+def test_set_if_unset_after_set_does_not_block_default():
+    add = ev("X", 2, "append", "extra")
+    a = analyze({"X": [ev("X", 1, detail="base"), add, ev("X", 3, "set?", "a b")]},
+                {"X": "base extra"})
+    assert codes(a, add) == []
+
+
 def test_weak_default_unused_after_set():
     weak = ev("X", 1, "set", "default", flag="_defaultval")
     a = analyze({"X": [weak, ev("X", 2, detail="real")]}, {"X": "real"})
@@ -252,3 +285,68 @@ def test_weak_default_is_not_called_python_code():
     weak = ev("X", 1, "set", "default", flag="_defaultval", parsing=False)
     assert "(Python code)" not in backend.where(weak)
     assert "(Python code)" in backend.where(ev("X", 3, parsing=False))
+
+
+# -- configuration files ------------------------------------------------------
+
+CONFIG_OVERRIDES = {"linux", "x86-64", "qemux86-64", "poky", "class-target", "libc-glibc"}
+RECIPES = {"busybox", "packagegroup-base", "core-image-minimal"}
+
+
+def test_override_parts():
+    assert backend.override_parts("X:pn-foo", {"op": ":append[qemuarm]"}) == ["pn-foo", "qemuarm"]
+    assert backend.override_parts("X", {"op": "append"}) == []
+
+
+def classify(parts):
+    return backend.classify_conf_event(parts, CONFIG_OVERRIDES, RECIPES)
+
+
+def test_classify_conf_event():
+    assert classify([]) == (backend.CONF_GLOBAL, [])
+    # Another machine: decided by the configuration (or an image).
+    assert classify(["qemuarm"]) == (backend.CONF_GLOBAL, [])
+    assert classify(["pn-busybox"]) == (backend.CONF_RECIPE, ["busybox"])
+    # Active in the configuration, but not in native recipes.
+    assert classify(["class-target"]) == (backend.CONF_UNKNOWN, [])
+    assert classify(["class-native"]) == (backend.CONF_UNKNOWN, [])
+    # Package names.
+    assert classify(["packagegroup-base"]) == (backend.CONF_UNKNOWN, [])
+    assert classify(["busybox-syslog"]) == (backend.CONF_UNKNOWN, [])
+
+
+def test_has_recipe_override():
+    assert backend.has_recipe_override("X:class-target")
+    assert not backend.has_recipe_override("X:pn-busybox")
+    assert not backend.has_recipe_override("X:qemuarm")
+
+
+def test_images_from_manifests():
+    entries = [
+        ("core-image-minimal-qemux86-64.rootfs.manifest", 10),        # scarthgap
+        ("core-image-sato-qemux86-64-20240101000000.rootfs.manifest", 30),
+        ("core-image-sato-qemux86-64.manifest", 20),                  # kirkstone
+        ("core-image-minimal-qemux86-64.rootfs.ext4", 40),
+        ("not-a-recipe-qemux86-64.manifest", 50),
+        ("core-image-minimal-qemuarm.manifest", 60),
+    ]
+    recipes = {"core-image-minimal", "core-image-sato"}
+    assert backend.images_from_manifests(entries, "qemux86-64", recipes, 3) == [
+        "core-image-sato", "core-image-minimal"]
+    assert backend.images_from_manifests(entries, "qemux86-64", recipes, 1) == ["core-image-sato"]
+
+
+def test_merge_with_voters():
+    conf = "/build/conf/local.conf"
+    add = ev("IMAGE_INSTALL", 5, "append", "foo", file=conf)
+    image_set = ev("IMAGE_INSTALL", 3, detail="base", file="/layer/image.bb")
+    config = analyze({"IMAGE_INSTALL": [add]}, {"IMAGE_INSTALL": " foo"})
+    image = analyze({"IMAGE_INSTALL": [add, image_set]}, {"IMAGE_INSTALL": "base"})
+    per_variant = [("configuration", config, config.histories), ("img", image, image.histories)]
+    key = backend.event_key(add)
+    # The configuration alone says the line is fine; the image decides.
+    assert merge_variants(per_variant, {conf}, {key: {"configuration"}}) == []
+    (diag,) = merge_variants(per_variant, {conf}, {key: {"img"}})
+    assert diag["code"] == "overwritten" and "image.bb:3" in diag["message"]
+    # No voters: not reported.
+    assert merge_variants(per_variant, {conf}, {}) == []

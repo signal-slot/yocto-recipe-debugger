@@ -42,6 +42,9 @@ class BitbakeSettings:
     # Command prefix that enters the BitBake environment, for example
     # "docker run --rm -i -v /work:/work image".  Empty runs on the host.
     command_wrapper: str = ""
+    # Images that decide whether a line of a .conf file has an effect.
+    # Empty: the images built before (found in DEPLOY_DIR_IMAGE).
+    images: list = field(default_factory=list)
     extra_env: dict = field(default_factory=dict)
     # The first analysis after a configuration change parses every recipe.
     timeout: float = 1800
@@ -143,7 +146,7 @@ class BitbakeProcess:
             return bool(sel.select(timeout))
 
     def analyze(self, file: str) -> dict:
-        return self.request("analyze", {"file": file})
+        return self.request("analyze", {"file": file, "images": list(self.settings.images)})
 
     def close(self) -> None:
         with self._lock:

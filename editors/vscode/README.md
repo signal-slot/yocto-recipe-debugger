@@ -14,17 +14,24 @@ shows, for each line, whether it has an effect.
   `libc-musl` is not in `OVERRIDES`, a value that is set again later
   (also by a bbappend), a `?=` after the value is set, and more.
 - **Warnings**: `:append` without a leading space, `+=` that discards a
-  `??=` default.
+  `??=` default, `+=` that comes before a `?=` default (for example
+  `DISTRO_FEATURES += "x"` in `local.conf`).
 - **Hover** shows the final value, the value in other variants
   (`BBCLASSEXTEND`), and the history of the variable.
 - **Inlay hints** show the final value at the last assignment.
 
 ![Hover shows the final value and the history](https://raw.githubusercontent.com/signal-slot/yocto-recipe-debugger/main/docs/images/hover.png)
 
-Supported files: `.bb`, `.bbappend`, and `.inc`. `.inc` files under a
+Supported files: `.bb`, `.bbappend`, `.inc`, and `.conf`. `.inc` files under a
 `recipes-*` directory are BitBake files; other `.inc` files are analyzed
 only when the workspace has a `.bb` or `.bbappend` file. The analysis runs
 when a file is opened or saved.
+
+`.conf` files (`local.conf`, `layer.conf`, machine and distro confs, ...)
+are analyzed with the images, because an image recipe can overwrite what
+`local.conf` sets: `IMAGE_INSTALL += "foo"` has no effect when the image
+sets `IMAGE_INSTALL = "..."`. A line with `pn-foo` is analyzed with recipe
+`foo`. Lines with `class-*` overrides are not reported.
 
 ## Requirements
 
@@ -39,7 +46,8 @@ when a file is opened or saved.
 {
   "yoctoRecipeDebugger.buildDir": "${workspaceFolder}/build",
   "yoctoRecipeDebugger.initScript": "${workspaceFolder}/poky/oe-init-build-env",
-  "yoctoRecipeDebugger.commandWrapper": ""
+  "yoctoRecipeDebugger.commandWrapper": "",
+  "yoctoRecipeDebugger.images": ["core-image-minimal"]
 }
 ```
 
@@ -48,6 +56,7 @@ when a file is opened or saved.
 | `buildDir` | BitBake build directory. |
 | `initScript` | `oe-init-build-env`. Empty: search next to the build directory. |
 | `commandWrapper` | Command prefix that runs BitBake in a supported build host, for example `docker run --rm -i -v /work:/work my-yocto-image`. Paths must be the same inside and outside. |
+| `images` | Images that decide the lines of `.conf` files. Empty: the images built before for this `MACHINE` (up to 3). Without an image, the configuration decides. |
 | `python` | Python used to run the language server (default `python3`). |
 
 ## Notes

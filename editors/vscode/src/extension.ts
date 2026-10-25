@@ -6,6 +6,13 @@ import * as vscode from "vscode";
 import { LanguageClient, LanguageClientOptions, ServerOptions } from "vscode-languageclient/node";
 
 const SECTION = "yoctoRecipeDebugger";
+// Configuration files of a build directory or a layer.  Other .conf files
+// are not BitBake files.  Their language is not changed: the server only
+// needs to know when they are opened and saved.
+const CONF_PATTERNS = [
+  "**/conf/{local,site,auto,bblayers,layer}.conf",
+  "**/conf/{machine,distro,multiconfig}/**/*.conf",
+];
 let client: LanguageClient | undefined;
 
 function substitute(value: string): string {
@@ -19,6 +26,7 @@ function settings() {
     buildDir: substitute(config.get<string>("buildDir", "")),
     initScript: substitute(config.get<string>("initScript", "")),
     commandWrapper: substitute(config.get<string>("commandWrapper", "")),
+    images: config.get<string[]>("images", []),
     python: config.get<string>("python", "python3"),
   };
 }
@@ -37,11 +45,13 @@ async function start(context: vscode.ExtensionContext): Promise<void> {
     documentSelector: [
       { scheme: "file", language: "bitbake" },
       { scheme: "file", pattern: "**/*.{bb,bbappend,inc}" },
+      ...CONF_PATTERNS.map((pattern) => ({ scheme: "file", pattern })),
     ],
     initializationOptions: {
       buildDir: s.buildDir,
       initScript: s.initScript,
       commandWrapper: s.commandWrapper,
+      images: s.images,
     },
   };
   client = new LanguageClient(SECTION, "Yocto Recipe Debugger", serverOptions, clientOptions);
